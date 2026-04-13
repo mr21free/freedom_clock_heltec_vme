@@ -4,7 +4,6 @@
 #include "esp_sleep.h"
 #include <cstring>
 #include <cstdlib>
-#include <ctime>
 #include "secrets.h"
 
 // ============================================================
@@ -18,16 +17,12 @@ static constexpr float MONTHLY_EXP_USD = 10000.0f;
 static constexpr float INFLATION_ANNUAL = 0.02f;
 
 // Deep sleep interval
-static constexpr uint64_t SLEEP_MINUTES = 60;
+static constexpr uint64_t SLEEP_MINUTES = 1440;
+static constexpr uint64_t MICROSECONDS_PER_MINUTE = 60ULL * 1000000ULL;
 
 // MQTT topics
 static const char* TOPIC_PRICE_USD   = "home/bitcoin/price/usd";
 static const char* TOPIC_BALANCE_BTC = "home/bitcoin/wallets/total_btc";
-
-// NTP / TZ (Switzerland)
-static const char* NTP_1 = "pool.ntp.org";
-static const char* NTP_2 = "time.nist.gov";
-static const char* TZ_CH = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 // ============================================================
 // Hardware pins (Vision Master E213)
@@ -41,14 +36,22 @@ static constexpr float ADC_MAX    = 4095.0f;
 static constexpr float ADC_REF_V  = 3.3f;
 static constexpr float VBAT_SCALE = 4.9f;
 
+static constexpr size_t VALUE_BUFFER_SIZE = 16;
+static constexpr uint16_t WIFI_CONNECT_TIMEOUT_MS = 15000;
+static constexpr uint16_t MQTT_CONNECT_TIMEOUT_MS = 5000;
+static constexpr uint16_t MQTT_WAIT_FOR_MESSAGES_MS = 4000;
+static constexpr uint16_t MQTT_LOOP_DELAY_MS = 10;
+static constexpr uint16_t BATTERY_ADC_SETTLE_DELAY_MS = 5;
+static constexpr uint16_t EINK_POWER_UP_DELAY_MS = 100;
+static constexpr uint16_t WIFI_POLL_DELAY_MS = 250;
+static constexpr uint16_t MQTT_RETRY_DELAY_MS = 500;
+static constexpr char MQTT_CLIENT_ID[] = "VM_E213_FreedomClock";
+
 // ============================================================
 // RTC persisted data (survives deep sleep)
 // ============================================================
-RTC_DATA_ATTR char lastPriceUsd[16]   = "--";
-RTC_DATA_ATTR char lastBalanceBtc[16] = "--";
-
-RTC_DATA_ATTR float lastBatteryVoltage = 0.0f;
-RTC_DATA_ATTR int   lastBatteryPercent = -1;
+RTC_DATA_ATTR char lastPriceUsd[VALUE_BUFFER_SIZE]   = "--";
+RTC_DATA_ATTR char lastBalanceBtc[VALUE_BUFFER_SIZE] = "--";
 
 // ============================================================
 // Globals
@@ -61,8 +64,8 @@ EInkDisplay_VisionMasterE213 display;
 static volatile bool gotPrice   = false;
 static volatile bool gotBalance = false;
 
-static char priceUsdBuf[16]   = "";
-static char balanceBtcBuf[16] = "";
+static char priceUsdBuf[VALUE_BUFFER_SIZE]   = "";
+static char balanceBtcBuf[VALUE_BUFFER_SIZE] = "";
 
 // ============================================================
 // Utilities
@@ -86,18 +89,6 @@ static void safeCopy(char* dst, size_t dstSize, const char* src, size_t srcLen) 
   if (src && srcLen > 0) memcpy(dst, src, n);
   dst[n] = '\0';
 }
-
-static String makeTimestampOrFallback() {
-  struct tm timeinfo;
-  if (!getLocalTime(&timeinfo, 1500 /*ms*/)) return "--";
-  char buffer[20]; // "YYYY-MM-DD HH:MM"
-  strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M", &timeinfo);
-  return String(buffer);
-}
-
-// ============================================================
-// Battery helpers
-// ============================================================
 
 static int batteryPercentFromVoltage(float v) {
   static constexpr int   NUM_POINTS = 8;
@@ -126,7 +117,7 @@ static int batteryPercentFromVoltage(float v) {
 static float readBatteryVoltage() {
   pinMode(PIN_ADC_CTRL, OUTPUT);
   digitalWrite(PIN_ADC_CTRL, HIGH);
-  delay(5);
+  delay(BATTERY_ADC_SETTLE_DELAY_MS);
 
   pinMode(PIN_BAT_ADC, INPUT);
   int raw = analogRead(PIN_BAT_ADC);
@@ -186,6 +177,46 @@ static void computeLongevityWithInflation(
 }
 
 // ============================================================
+// Display Battery Icon 
+// ============================================================
+
+static void drawBatteryIcon(int x, int y, int pct) {
+  // Clamp percent
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+
+  // Icon size
+  const int bodyW = 40;
+  const int bodyH = 18;
+  const int tipW  = 3;
+  const int tipH  = 9;
+
+  // Inner padding
+  const int pad = 3;
+
+  // Battery outline
+  display.drawRoundRect(x, y, bodyW, bodyH, 3, BLACK);
+
+  // Battery tip
+  display.fillRect(x + bodyW, y + (bodyH - tipH) / 2, tipW, tipH, BLACK);
+
+  // Inner area
+  const int innerX = x + pad;
+  const int innerY = y + pad;
+  const int innerW = bodyW - (pad * 2);
+  const int innerH = bodyH - (pad * 2);
+
+  // Clear inside first
+  display.fillRect(innerX, innerY, innerW, innerH, WHITE);
+
+  // Fill based on battery %
+  int fillW = (innerW * pct) / 100;
+  if (fillW > 0) {
+    display.fillRect(innerX, innerY, fillW, innerH, BLACK);
+  }
+}
+
+// ============================================================
 // Display (NO BTC balance / NO USD wealth shown)
 // ============================================================
 
@@ -193,53 +224,52 @@ static void drawFreedomClock(
   int years,
   int months,
   int weeks,
-  float btcPriceUsd,
-  float vbat,
-  int pct,
-  const String& timestamp
+  int pct
 ) {
   display.clear();
   display.setRotation(1);
   display.setTextColor(BLACK);
-
-  // Title
+  
   display.setTextSize(1);
   display.setCursor(10, 8);
   display.println("FREEDOM CLOCK");
 
-  // Big numbers
+  // years
   display.setTextSize(4);
   display.setCursor(10, 42);
+  if (years < 10) display.print('0');
   display.print(years);
+  display.setTextSize(3);
+  int x = display.getCursorX();
+  display.setCursor(x, 49);
   display.print("Y");
 
-  display.setCursor(110, 42);
-  display.print(months);
+  // months
+  display.setCursor(95, 42);
+  display.setTextSize(4);
+  if (months < 10) display.print('0');
+  display.print(months);  
+  display.setTextSize(3);
+  x = display.getCursorX();
+  display.setCursor(x, 49);
   display.print("M");
 
+  // weeks
   display.setCursor(185, 42);
+  display.setTextSize(4);
   display.print(weeks);
+  display.setTextSize(3);
+  x = display.getCursorX();
+  display.setCursor(x, 49);
   display.print("W");
 
-  // Footer: BTC price
-  display.setTextSize(1);
-  display.setCursor(10, 90);
-  display.print((long)btcPriceUsd);
-  display.print(" (BTC price USD)");
+  // Battery icon and percentage
+  drawBatteryIcon(10, 92, pct);
 
-  // Footer: Battery
-  display.setCursor(10, 100);
-  if (pct >= 0) {
-    display.print(pct);
-    display.print("% (Battery)");
-  } else {
-    display.print("-- (Battery)");
-  }
-
-  // Footer: Last update
-  display.setCursor(10, 110);
-  display.print(timestamp);
-  display.print(" (Last update)");
+  display.setCursor(58, 94);
+  display.setTextSize(2);
+  display.print(pct);
+  display.print("%");
 
   display.update();
 }
@@ -268,25 +298,25 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 // WiFi + MQTT
 // ============================================================
 
-static bool connectWiFi(uint16_t timeout_ms = 15000) {
+static bool connectWiFi(uint16_t timeout_ms = WIFI_CONNECT_TIMEOUT_MS) {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeout_ms) {
-    delay(250);
+    delay(WIFI_POLL_DELAY_MS);
   }
   return WiFi.status() == WL_CONNECTED;
 }
 
-static bool connectMQTT(uint16_t timeout_ms = 5000) {
+static bool connectMQTT(uint16_t timeout_ms = MQTT_CONNECT_TIMEOUT_MS) {
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
 
   uint32_t start = millis();
   while (!mqttClient.connected() && (millis() - start) < timeout_ms) {
-    if (mqttClient.connect("VM_E213_FreedomClock", MQTT_USER, MQTT_PASS)) break;
-    delay(500);
+    if (mqttClient.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS)) break;
+    delay(MQTT_RETRY_DELAY_MS);
   }
   if (!mqttClient.connected()) return false;
 
@@ -301,7 +331,7 @@ static bool connectMQTT(uint16_t timeout_ms = 5000) {
 
 static void goToSleep() {
   digitalWrite(PIN_EINK_POWER, LOW);
-  uint64_t sleep_us = SLEEP_MINUTES * 60ULL * 1000000ULL;
+  uint64_t sleep_us = SLEEP_MINUTES * MICROSECONDS_PER_MINUTE;
   esp_sleep_enable_timer_wakeup(sleep_us);
   esp_deep_sleep_start();
 }
@@ -314,25 +344,16 @@ void setup() {
   // Power e-ink
   pinMode(PIN_EINK_POWER, OUTPUT);
   digitalWrite(PIN_EINK_POWER, HIGH);
-  delay(100);
+  delay(EINK_POWER_UP_DELAY_MS);
 
   display.begin();
 
   // Battery
   float vbat = readBatteryVoltage();
   int pct = batteryPercentFromVoltage(vbat);
-  lastBatteryVoltage = vbat;
-  lastBatteryPercent = pct;
 
   // Network
   bool wifiOK = connectWiFi();
-  String timestamp = "--";
-  if (wifiOK) {
-    configTime(0, 0, NTP_1, NTP_2);
-    setenv("TZ", TZ_CH, 1);
-    tzset();
-    timestamp = makeTimestampOrFallback();
-  }
 
   // MQTT
   bool mqttOK = false;
@@ -345,9 +366,9 @@ void setup() {
 
   if (mqttOK) {
     uint32_t start = millis();
-    while (millis() - start < 4000) {
+    while (millis() - start < MQTT_WAIT_FOR_MESSAGES_MS) {
       mqttClient.loop();
-      delay(10);
+      delay(MQTT_LOOP_DELAY_MS);
       if (gotPrice && gotBalance) break;
     }
   }
@@ -366,16 +387,14 @@ void setup() {
   int years = 0, months = 0, weeks = 0;
   computeLongevityWithInflation(usdWealth, MONTHLY_EXP_USD, INFLATION_ANNUAL, years, months, weeks);
 
-  drawFreedomClock(years, months, weeks, priceUsd, vbat, pct, timestamp);
+  drawFreedomClock(years, months, weeks, pct);
 
   // Persist last known values
   if (gotPrice) {
-    strncpy(lastPriceUsd, priceUsdBuf, sizeof(lastPriceUsd) - 1);
-    lastPriceUsd[sizeof(lastPriceUsd) - 1] = '\0';
+    safeCopy(lastPriceUsd, sizeof(lastPriceUsd), priceUsdBuf, strlen(priceUsdBuf));
   }
   if (gotBalance) {
-    strncpy(lastBalanceBtc, balanceBtcBuf, sizeof(lastBalanceBtc) - 1);
-    lastBalanceBtc[sizeof(lastBalanceBtc) - 1] = '\0';
+    safeCopy(lastBalanceBtc, sizeof(lastBalanceBtc), balanceBtcBuf, strlen(balanceBtcBuf));
   }
 
   // Clean shutdown

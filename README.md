@@ -23,9 +23,7 @@ It connects to your local network via Wi-Fi, pulls **BTC price** + your **total 
 On the e-ink display:
 
 - **Years + Months + Weeks** of “freedom time”
-- BTC price (USD)
 - Battery %
-- Last update timestamp
 
 No BTC balance or USD net worth is shown on the screen (by design).
 
@@ -94,7 +92,7 @@ static constexpr float MONTHLY_EXP_USD = 10000.0f;
 static constexpr float INFLATION_ANNUAL = 0.02f;
 
 // Deep sleep interval (minutes)
-static constexpr uint64_t SLEEP_MINUTES = 60;
+static constexpr uint64_t SLEEP_MINUTES = 1440;
 ```
 
 Examples:
