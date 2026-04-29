@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Freedom Clock</title>
+  <style>
+    :root {
+      --bg: #f2efe8;
+      --panel: #fffdf8;
+      --ink: #1f1d1a;
+      --muted: #1f1d1a;
+      --line: #1f1d1a;
+      --accent: #1f1d1a;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Courier New", "Lucida Console", Monaco, monospace;
+      background: linear-gradient(180deg, #efe9df 0%, #f7f3ec 100%);
+      color: var(--ink);
+    }
+
+    .wrap {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 20px 40px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+      letter-spacing: 0.03em;
+      font-weight: 700;
+    }
+
+    .intro {
+      margin: 0 0 24px;
+      color: var(--muted);
+      max-width: 70ch;
+      line-height: 1.45;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: 0 12px 30px rgba(31, 29, 26, 0.06);
+    }
+
+    .controls {
+      padding: 18px;
+    }
+
+    .section-title {
+      margin: 18px 0 10px;
+      font-size: 0.88rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+    }
+
+    .section-title:first-child {
+      margin-top: 0;
+    }
+
+    .field {
+      margin-bottom: 12px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
+    .label-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .label-row label {
+      margin-bottom: 0;
+    }
+
+    .info-badge {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: help;
+      user-select: none;
+    }
+
+    .info-badge::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 10px);
+      transform: translateX(-50%);
+      width: 240px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #1f1d1a;
+      color: #fffdf8;
+      font-size: 0.82rem;
+      font-weight: 400;
+      line-height: 1.35;
+      text-align: left;
+      white-space: normal;
+      opacity: 0;
+      pointer-events: none;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+      transition: opacity 120ms ease;
+      z-index: 10;
+    }
+
+    .info-badge:hover::after,
+    .info-badge:focus-visible::after {
+      opacity: 1;
+    }
+
+    input,
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+    }
+
+    .clock-panel {
+      padding: 18px;
+    }
+
+    .preview-stack {
+      display: grid;
+      gap: 18px;
+    }
+
+    .clock {
+      width: 100%;
+      max-width: 760px;
+      margin: 0 auto;
+      background: #fcfaf4;
+      border: 2px solid var(--line);
+      border-radius: 16px;
+      padding: 20px 22px 24px;
+      font-family: Georgia, "Times New Roman", serif;
+    }
+
+    .clock-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.92rem;
+      letter-spacing: 0.03em;
+    }
+
+    .clock-body {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 220px;
+      gap: 18px;
+      align-items: stretch;
+      margin-top: 8px;
+    }
+
+    .clock-left {
+      padding-right: 18px;
+      border-right: 2px solid var(--line);
+    }
+
+    .clock-right {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding-top: 20px;
+      text-align: center;
+    }
+
+    .clock-right-title {
+      font-size: 0.92rem;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+      margin-bottom: 20px;
+      line-height: 1.15;
+    }
+
+    .coverage-value {
+      font-size: clamp(1.8rem, 3.8vw, 2.4rem);
+      font-weight: 700;
+      letter-spacing: -0.05em;
+      line-height: 1;
+      color: var(--accent);
+    }
+
+    .device-battery {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .device-battery-icon {
+      position: relative;
+      width: 24px;
+      height: 12px;
+      border: 2px solid var(--ink);
+      border-radius: 3px;
+    }
+
+    .device-battery-icon::after {
+      content: "";
+      position: absolute;
+      right: -5px;
+      top: 3px;
+      width: 3px;
+      height: 4px;
+      background: var(--ink);
+      border-radius: 1px;
+    }
+
+    .device-battery-fill {
+      height: 100%;
+      background: var(--ink);
+    }
+
+    .countdown {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 10px;
+    }
+
+    .countdown.single {
+      grid-template-columns: 1fr;
+      max-width: 220px;
+    }
+
+    .unit {
+      display: flex;
+      align-items: flex-end;
+      gap: 6px;
+    }
+
+    .value {
+      font-size: clamp(3rem, 7vw, 4.6rem);
+      line-height: 0.9;
+      font-weight: 700;
+      letter-spacing: -0.04em;
+    }
+
+    .suffix {
+      font-size: clamp(1.5rem, 3vw, 2.3rem);
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .divider {
+      height: 1px;
+      margin: 18px 0 12px;
+      background: var(--line);
+    }
+
+    .section-label {
+      font-size: 0.92rem;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+    }
+
+    .pixel-panel {
+      padding: 18px;
+    }
+
+    .pixel-intro {
+      margin: 0 0 14px;
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+
+    .pixel-wrap {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .canvas-shell {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .canvas-meta {
+      margin: 0 0 10px;
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+
+    .pixel-canvas {
+      display: block;
+      width: 100%;
+      max-width: 1000px;
+      aspect-ratio: 250 / 122;
+      border: 1px solid var(--line);
+      background: #fff;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    .layout-controls {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }
+
+    .layout-controls .section-title {
+      margin-top: 0;
+    }
+
+    .layout-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .code-output {
+      margin-top: 14px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      font-size: 0.84rem;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 900px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .clock {
+        padding: 16px;
+      }
+
+      .clock-body {
+        grid-template-columns: 1fr;
+      }
+
+      .clock-left {
+        padding-right: 0;
+        border-right: 0;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 18px;
+      }
+
+      .clock-right {
+        padding-top: 10px;
+      }
+
+      .pixel-wrap {
+        grid-template-columns: 1fr;
+      }
+
+      .layout-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Freedom Clock</h1>
+    <p class="intro">
+      Your money is not just a number. It is time, time with your family, time for work that matters, time to stop postponing the life you actually want.
+    </p>
+    <p class="intro">
+      Freedom Clock shows how long your savings could support your lifestyle, and how much life may still be ahead of you, based on the assumptions you choose.
+    </p>
+
+    <div class="grid">
+      <section class="panel controls">
+        <div class="section-title">Portfolio Inputs</div>
+        <div class="field">
+          <label for="ownerName">Owner name</label>
+          <input id="ownerName" type="text" value="MIKE">
+        </div>
+        <div class="field">
+          <label for="assetType">Asset type</label>
+          <select id="assetType">
+            <option value="btc" selected>BTC</option>
+            <option value="wealth">Wealth (USD)</option>
+          </select>
+        </div>
+        <div id="btcAmountField" class="field">
+          <label for="btcAmount">BTC amount</label>
+          <input id="btcAmount" type="number" step="0.0001" value="2.1">
+        </div>
+        <div id="btcPriceField" class="field">
+          <label for="btcPrice">BTC price in USD</label>
+          <input id="btcPrice" type="number" step="0.01" value="76000">
+        </div>
+        <div id="wealthAmountField" class="field hidden">
+          <label for="wealthAmount">Wealth amount in USD</label>
+          <input id="wealthAmount" type="number" step="0.01" value="1596000">
+        </div>
+        <div class="field">
+          <label for="monthlyExpense">Monthly spending in USD</label>
+          <input id="monthlyExpense" type="number" step="0.01" value="10000">
+        </div>
+        <div class="field">
+          <label for="growthAnnual">Annual wealth growth %</label>
+          <input id="growthAnnual" type="number" step="0.01" value="10">
+        </div>
+        <div class="field">
+          <label for="inflationAnnual">Annual inflation %</label>
+          <input id="inflationAnnual" type="number" step="0.01" value="2">
+        </div>
+        <div class="field">
+          <div class="label-row">
+            <label for="freedomMode">Withdrawal mode</label>
+            <span
+              class="info-badge"
+              tabindex="0"
+              data-tooltip="Sell means you spend from the portfolio itself: the portfolio keeps growing, but every month one month of living costs is withdrawn from it. Borrow means you keep the portfolio as collateral, refinance once per year, borrow one full year of spending at a time, and let the outstanding debt roll forward with the annual borrowing fee."
+            >i</span>
+          </div>
+          <select id="freedomMode">
+            <option value="sell" selected>sell</option>
+            <option value="borrow">borrow</option>
+          </select>
+        </div>
+        <div id="borrowFeeField" class="field">
+          <label for="borrowFeeAnnual">Annual borrowing fee %</label>
+          <input id="borrowFeeAnnual" type="number" step="0.01" value="5">
+        </div>
+        <div class="field">
+          <label for="deviceBattery">Device battery %</label>
+          <input id="deviceBattery" type="number" step="1" min="0" max="100" value="78">
+        </div>
+
+        <div class="section-title">Life Inputs</div>
+        <div class="field">
+          <label for="birthYear">Birth year</label>
+          <input id="birthYear" type="number" step="1" value="1980">
+        </div>
+        <div class="field">
+          <label for="lifeExpectancy">Life expectancy in years</label>
+          <input id="lifeExpectancy" type="number" step="1" value="85">
+        </div>
+        <div class="field">
+          <label for="currentDate">Current date for testing</label>
+          <input id="currentDate" type="date">
+        </div>
+      </section>
+
+      <section class="preview-stack">
+        <section class="panel clock-panel">
+          <div class="clock">
+            <div class="clock-topbar">
+              <div id="freedomTitle">MIKE'S FREEDOM TIME</div>
+              <div class="device-battery">
+                <div class="device-battery-icon"><div id="deviceBatteryFill" class="device-battery-fill"></div></div>
+                <div id="deviceBatteryText">78%</div>
+              </div>
+            </div>
+
+            <div class="clock-body">
+              <div class="clock-left">
+                <div id="freedomRow" class="countdown"></div>
+
+                <div class="divider"></div>
+
+                <div class="section-label">EXPECTED LIFETIME LEFT</div>
+                <div id="lifeRow" class="countdown"></div>
+              </div>
+
+              <div class="clock-right">
+                <div class="clock-right-title">FREEDOM<br>COVERAGE</div>
+                <div id="coverageValue" class="coverage-value">37%</div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <section class="panel pixel-panel">
+          <p class="pixel-intro">
+            Exact device sandbox for the E213 at <strong>250 × 122</strong> pixels. Tweak positions here first, then paste the resulting constants into the sketch.
+          </p>
+
+          <div class="pixel-wrap">
+            <div class="canvas-shell">
+              <p class="canvas-meta">Canvas preview of the real screen resolution, scaled up for inspection.</p>
+              <canvas id="pixelCanvas" class="pixel-canvas" width="250" height="122"></canvas>
+              <pre id="layoutCode" class="code-output"></pre>
+            </div>
+
+            <div class="layout-controls">
+              <div class="section-title">Layout Tuning</div>
+              <div class="layout-grid">
+                <div class="field">
+                  <label for="layoutLeftX">Left X</label>
+                  <input id="layoutLeftX" type="number" step="1" value="4">
+                </div>
+                <div class="field">
+                  <label for="layoutStepX">Number step X</label>
+                  <input id="layoutStepX" type="number" step="1" value="62">
+                </div>
+                <div class="field">
+                  <label for="layoutDividerX">Divider X</label>
+                  <input id="layoutDividerX" type="number" step="1" value="181">
+                </div>
+                <div class="field">
+                  <label for="layoutRightX">Right section X</label>
+                  <input id="layoutRightX" type="number" step="1" value="188">
+                </div>
+                <div class="field">
+                  <label for="layoutTopNumberY">Top numbers Y</label>
+                  <input id="layoutTopNumberY" type="number" step="1" value="23">
+                </div>
+                <div class="field">
+                  <label for="layoutBottomNumberY">Bottom numbers Y</label>
+                  <input id="layoutBottomNumberY" type="number" step="1" value="85">
+                </div>
+                <div class="field">
+                  <label for="layoutLineY">Middle line Y</label>
+                  <input id="layoutLineY" type="number" step="1" value="59">
+                </div>
+                <div class="field">
+                  <label for="layoutRightValueY">Right value Y</label>
+                  <input id="layoutRightValueY" type="number" step="1" value="66">
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const MAX_MONTHS = 12 * 200;
+    const WEEKSPERMONTH = 4.345;
+
+    const elements = {
+      ownerName: document.getElementById("ownerName"),
+      assetType: document.getElementById("assetType"),
+      btcAmountField: document.getElementById("btcAmountField"),
+      btcAmount: document.getElementById("btcAmount"),
+      btcPriceField: document.getElementById("btcPriceField"),
+      btcPrice: document.getElementById("btcPrice"),
+      wealthAmountField: document.getElementById("wealthAmountField"),
+      wealthAmount: document.getElementById("wealthAmount"),
+      monthlyExpense: document.getElementById("monthlyExpense"),
+      growthAnnual: document.getElementById("growthAnnual"),
+      inflationAnnual: document.getElementById("inflationAnnual"),
+      freedomMode: document.getElementById("freedomMode"),
+      borrowFeeField: document.getElementById("borrowFeeField"),
+      borrowFeeAnnual: document.getElementById("borrowFeeAnnual"),
+      deviceBattery: document.getElementById("deviceBattery"),
+      birthYear: document.getElementById("birthYear"),
+      lifeExpectancy: document.getElementById("lifeExpectancy"),
+      currentDate: document.getElementById("currentDate"),
+      freedomTitle: document.getElementById("freedomTitle"),
+      freedomRow: document.getElementById("freedomRow"),
+      lifeRow: document.getElementById("lifeRow"),
+      coverageValue: document.getElementById("coverageValue"),
+      deviceBatteryFill: document.getElementById("deviceBatteryFill"),
+      deviceBatteryText: document.getElementById("deviceBatteryText"),
+      pixelCanvas: document.getElementById("pixelCanvas"),
+      layoutCode: document.getElementById("layoutCode"),
+      layoutLeftX: document.getElementById("layoutLeftX"),
+      layoutStepX: document.getElementById("layoutStepX"),
+      layoutDividerX: document.getElementById("layoutDividerX"),
+      layoutRightX: document.getElementById("layoutRightX"),
+      layoutTopNumberY: document.getElementById("layoutTopNumberY"),
+      layoutBottomNumberY: document.getElementById("layoutBottomNumberY"),
+      layoutLineY: document.getElementById("layoutLineY"),
+      layoutRightValueY: document.getElementById("layoutRightValueY")
+    };
+
+    const pixelCtx = elements.pixelCanvas.getContext("2d", { alpha: false });
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function parseNumber(el, fallback = 0) {
+      const n = Number(el.value);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function addCountdownUnit(parent, value, suffix) {
+      const unit = document.createElement("div");
+      unit.className = "unit";
+
+      const valueEl = document.createElement("div");
+      valueEl.className = "value";
+      valueEl.textContent = value;
+
+      const suffixEl = document.createElement("div");
+      suffixEl.className = "suffix";
+      suffixEl.textContent = suffix;
+
+      unit.appendChild(valueEl);
+      unit.appendChild(suffixEl);
+      parent.appendChild(unit);
+    }
+
+    function renderFreedom(result) {
+      elements.freedomRow.innerHTML = "";
+      elements.freedomRow.className = "countdown";
+
+      if (result.hitCap) {
+        elements.freedomRow.classList.add("single");
+        const unit = document.createElement("div");
+        unit.className = "unit";
+        const valueEl = document.createElement("div");
+        valueEl.className = "value";
+        valueEl.textContent = "FOREVER";
+        unit.appendChild(valueEl);
+        elements.freedomRow.appendChild(unit);
+        return;
+      }
+
+      if (result.years > 99) {
+        elements.freedomRow.classList.add("single");
+        addCountdownUnit(elements.freedomRow, String(result.years), "Y");
+        return;
+      }
+
+      addCountdownUnit(elements.freedomRow, String(result.years).padStart(2, "0"), "Y");
+      addCountdownUnit(elements.freedomRow, String(result.months).padStart(2, "0"), "M");
+      addCountdownUnit(elements.freedomRow, String(result.weeks), "W");
+    }
+
+    function renderLife(life) {
+      elements.lifeRow.innerHTML = "";
+      elements.lifeRow.className = "countdown";
+      addCountdownUnit(elements.lifeRow, String(life.years).padStart(2, "0"), "Y");
+      addCountdownUnit(elements.lifeRow, String(life.months).padStart(2, "0"), "M");
+      addCountdownUnit(elements.lifeRow, String(life.weeks), "W");
+    }
+
+    function chooseFreedomTitle(ownerName, ctx) {
+      const long = `${ownerName}'S EXPECTED FREEDOM TIME`;
+      const medium = `${ownerName}'S FREEDOM TIME`;
+      const short = `${ownerName}'S CLOCK`;
+      const wideWidth = 200 - parseNumber(elements.layoutLeftX) - 8;
+      const narrowWidth = parseNumber(elements.layoutDividerX) - parseNumber(elements.layoutLeftX) - 4;
+      const fitSlack = 18;
+
+      ctx.font = '8px "Courier New", monospace';
+      if (ownerName.length <= 5 && ctx.measureText(long).width <= (wideWidth + fitSlack)) return long;
+      if (ctx.measureText(long).width <= narrowWidth) return long;
+      if (ctx.measureText(medium).width <= (narrowWidth + 8)) return medium;
+      if (ctx.measureText(short).width <= (narrowWidth + fitSlack)) return short;
+      if (ctx.measureText("FREEDOM CLOCK").width <= wideWidth) return "FREEDOM CLOCK";
+      return "FREEDOM CLOCK";
+    }
+
+    function drawPixelBattery(ctx, x, y, pct) {
+      const width = 22;
+      const height = 10;
+      const tipW = 2;
+      const tipH = 5;
+      const pad = 2;
+      const clampedPct = clamp(Math.round(pct), 0, 100);
+
+      ctx.strokeRect(x + 0.5, y + 0.5, width, height);
+      ctx.fillRect(x + width, y + Math.floor((height - tipH) / 2), tipW, tipH);
+      ctx.clearRect(x + pad, y + pad, width - (pad * 2), height - (pad * 2));
+      const innerW = width - (pad * 2);
+      const fillW = Math.round((innerW * clampedPct) / 100);
+      if (fillW > 0) {
+        ctx.fillRect(x + pad, y + pad, fillW, height - (pad * 2));
+      }
+    }
+
+    function drawPixelCountdown(ctx, x, y, a, b, c) {
+      ctx.font = '28px "Courier New", monospace';
+      ctx.fillText(a, x, y);
+      ctx.fillText(b, x + parseNumber(elements.layoutStepX), y);
+      ctx.fillText(c, x + (parseNumber(elements.layoutStepX) * 2), y);
+    }
+
+    function renderPixelCanvas(ownerName, freedom, life, coverageText, deviceBattery) {
+      const leftX = parseNumber(elements.layoutLeftX);
+      const stepX = parseNumber(elements.layoutStepX);
+      const dividerX = parseNumber(elements.layoutDividerX);
+      const rightX = parseNumber(elements.layoutRightX);
+      const topNumberY = parseNumber(elements.layoutTopNumberY);
+      const bottomNumberY = parseNumber(elements.layoutBottomNumberY);
+      const lineY = parseNumber(elements.layoutLineY);
+      const rightValueY = parseNumber(elements.layoutRightValueY);
+      const freedomTitle = chooseFreedomTitle(ownerName, pixelCtx);
+
+      pixelCtx.imageSmoothingEnabled = false;
+      pixelCtx.fillStyle = "#ffffff";
+      pixelCtx.fillRect(0, 0, 250, 122);
+      pixelCtx.fillStyle = "#000000";
+      pixelCtx.strokeStyle = "#000000";
+      pixelCtx.lineWidth = 1;
+      pixelCtx.textBaseline = "top";
+
+      pixelCtx.font = '8px "Courier New", monospace';
+      pixelCtx.fillText(freedomTitle, leftX, 8);
+      drawPixelBattery(pixelCtx, 200, 5, deviceBattery);
+      pixelCtx.fillText(`${deviceBattery}%`, 226, 7);
+
+      pixelCtx.beginPath();
+      pixelCtx.moveTo(dividerX + 0.5, 12);
+      pixelCtx.lineTo(dividerX + 0.5, 116);
+      pixelCtx.stroke();
+
+      if (freedom.hitCap) {
+        pixelCtx.font = '28px "Courier New", monospace';
+        pixelCtx.fillText("FOREVER", leftX, topNumberY);
+      } else if (freedom.years > 99) {
+        pixelCtx.font = '28px "Courier New", monospace';
+        pixelCtx.fillText(`${freedom.years}Y`, leftX, topNumberY);
+      } else {
+        drawPixelCountdown(
+          pixelCtx,
+          leftX,
+          topNumberY,
+          `${String(freedom.years).padStart(2, "0")}Y`,
+          `${String(freedom.months).padStart(2, "0")}M`,
+          `${freedom.weeks}W`
+        );
+      }
+
+      pixelCtx.beginPath();
+      pixelCtx.moveTo(leftX + 0.5, lineY + 0.5);
+      pixelCtx.lineTo(dividerX - 8 + 0.5, lineY + 0.5);
+      pixelCtx.stroke();
+
+      pixelCtx.font = '8px "Courier New", monospace';
+      pixelCtx.fillText("EXPECTED LIFETIME LEFT", leftX, 67);
+
+      drawPixelCountdown(
+        pixelCtx,
+        leftX,
+        bottomNumberY,
+        `${String(life.years).padStart(2, "0")}Y`,
+        `${String(life.months).padStart(2, "0")}M`,
+        `${life.weeks}W`
+      );
+
+      const rightTitleX = rightX + 4;
+      const rightValueX = rightX + 8;
+      pixelCtx.font = '8px "Courier New", monospace';
+      pixelCtx.fillText("FREEDOM", rightTitleX, 36);
+      pixelCtx.fillText("COVERAGE", rightTitleX, 46);
+      pixelCtx.font = '18px "Courier New", monospace';
+      pixelCtx.fillText(coverageText, rightValueX, rightValueY);
+
+      elements.layoutCode.textContent =
+`const int LEFT_X = ${Math.round(leftX)};
+const int NUMBER_STEP_X = ${Math.round(stepX)};
+const int MONTH_X = LEFT_X + NUMBER_STEP_X;
+const int WEEK_X = LEFT_X + (NUMBER_STEP_X * 2);
+const int DIVIDER_X = ${Math.round(dividerX)};
+const int RIGHT_X = ${Math.round(rightX)};
+const int RIGHT_TITLE_X = RIGHT_X + 4;
+const int RIGHT_VALUE_X = RIGHT_X + 8;
+const int TOP_NUMBER_Y = ${Math.round(topNumberY)};
+const int MID_LINE_Y = ${Math.round(lineY)};
+const int BOTTOM_NUMBER_Y = ${Math.round(bottomNumberY)};
+const int RIGHT_VALUE_Y = ${Math.round(rightValueY)};`;
+    }
+
+    function buildFreedomResult(months, hitCap, remaining, nextExpense, status) {
+      let years = 0;
+      let monthsOut = 0;
+      let weeks = 0;
+      let partialMonth = 0;
+      years = Math.floor(months / 12);
+      monthsOut = months % 12;
+
+      if (nextExpense > 0 && remaining > 0 && !hitCap) {
+        partialMonth = remaining / nextExpense;
+        if (partialMonth > 0.999) partialMonth = 0.999;
+        if (partialMonth < 0) partialMonth = 0;
+        weeks = clamp(Math.round(partialMonth * WEEKSPERMONTH), 0, 4);
+      }
+
+      const coveredWeeks = months * WEEKSPERMONTH + (partialMonth * WEEKSPERMONTH);
+      return { years, months: monthsOut, weeks, hitCap, status, coveredWeeks };
+    }
+
+    function computeFreedomSell(usdWealth, monthlyExpenseToday, inflationAnnual, assetGrowthAnnual) {
+      if (!(usdWealth > 0) || !(monthlyExpenseToday > 0)) {
+        return buildFreedomResult(0, false, 0, monthlyExpenseToday, "");
+      }
+
+      const inflation = Math.max(inflationAnnual, 0);
+      const growth = Math.max(assetGrowthAnnual, -0.99);
+      const monthlyExpenseMul = Math.pow(1 + inflation, 1 / 12);
+      const monthlyAssetMul = Math.pow(1 + growth, 1 / 12);
+
+      let remaining = usdWealth;
+      let monthlyExpense = monthlyExpenseToday;
+      let months = 0;
+
+      while (months < MAX_MONTHS) {
+        remaining *= monthlyAssetMul;
+        if (remaining < monthlyExpense) break;
+        remaining -= monthlyExpense;
+        monthlyExpense *= monthlyExpenseMul;
+        months++;
+      }
+
+      const hitCap = months >= MAX_MONTHS;
+      return buildFreedomResult(months, hitCap, remaining, monthlyExpense, "");
+    }
+
+    function computeFreedomBorrow(usdCollateralValue, monthlyExpenseToday, inflationAnnual, assetGrowthAnnual, borrowFeeAnnual) {
+      if (!(usdCollateralValue > 0) || !(monthlyExpenseToday > 0)) {
+        return buildFreedomResult(0, false, 0, monthlyExpenseToday, "");
+      }
+
+      const inflation = Math.max(inflationAnnual, 0);
+      const growth = Math.max(assetGrowthAnnual, -0.99);
+      const borrowFee = Math.max(borrowFeeAnnual, -0.99);
+      const annualExpenseMul = 1 + inflation;
+      const annualAssetMul = 1 + growth;
+      const annualDebtMul = 1 + borrowFee;
+
+      let annualExpense = monthlyExpenseToday * 12;
+      let collateralValue = usdCollateralValue;
+      let debt = 0;
+      let years = 0;
+      const maxYears = Math.floor(MAX_MONTHS / 12);
+
+      while (years < maxYears) {
+        collateralValue *= annualAssetMul;
+        debt *= annualDebtMul;
+        if ((debt + annualExpense) > collateralValue) break;
+        debt += annualExpense;
+        annualExpense *= annualExpenseMul;
+        years++;
+      }
+
+      const hitCap = years >= maxYears;
+      let partialYear = 0;
+      if (!hitCap && annualExpense > 0 && collateralValue > debt) {
+        partialYear = (collateralValue - debt) / annualExpense;
+        if (partialYear > 0.999) partialYear = 0.999;
+        if (partialYear < 0) partialYear = 0;
+      }
+
+      const coveredMonthsFloat = (years + partialYear) * 12;
+      const coveredFullMonths = Math.floor(coveredMonthsFloat);
+      const partialMonth = coveredMonthsFloat - coveredFullMonths;
+      const yearsOut = Math.floor(coveredFullMonths / 12);
+      const monthsOut = coveredFullMonths % 12;
+      const weeks = clamp(Math.round(partialMonth * WEEKSPERMONTH), 0, 4);
+      const coveredWeeks = coveredMonthsFloat * WEEKSPERMONTH;
+
+      return { years: yearsOut, months: monthsOut, weeks, hitCap, status: "", coveredWeeks };
+    }
+
+    function computeLife(birthYearValue, lifeExpectancyYears, currentDateValue) {
+      const birthYear = Math.round(Number(birthYearValue));
+      const birthDate = new Date(`${birthYear}-01-01T12:00:00`);
+      const now = new Date(`${currentDateValue}T12:00:00`);
+      const deathDate = new Date(birthDate);
+      deathDate.setFullYear(deathDate.getFullYear() + lifeExpectancyYears);
+
+      if (!Number.isFinite(birthYear) || Number.isNaN(birthDate.getTime()) || Number.isNaN(now.getTime()) || lifeExpectancyYears <= 0) {
+        return { years: 0, months: 0, weeks: 0 };
+      }
+
+      const clampedNow = now < birthDate ? birthDate : (now > deathDate ? deathDate : now);
+      const msPerDay = 24 * 60 * 60 * 1000;
+      let remainingDays = Math.max(0, Math.round((deathDate - clampedNow) / msPerDay));
+
+      const years = Math.floor(remainingDays / 365);
+      remainingDays %= 365;
+      const months = Math.floor(remainingDays / 30);
+      remainingDays %= 30;
+      const weeks = clamp(Math.floor(remainingDays / 7), 0, 4);
+
+      return { years, months, weeks };
+    }
+
+    function computeLifetimeCoveredText(freedom, life) {
+      if (freedom.hitCap) return "∞";
+      const remainingLifetimeWeeks = (life.years * 52.0) + (life.months * WEEKSPERMONTH) + life.weeks;
+      if (remainingLifetimeWeeks <= 0) return "100%";
+      const coveredPercent = clamp(Math.round((freedom.coveredWeeks / remainingLifetimeWeeks) * 100), 0, 999);
+      return `${coveredPercent}%`;
+    }
+
+    function getTodayLocalIsoDate() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function update() {
+      const ownerName = (elements.ownerName.value || "YOUR").trim().toUpperCase();
+      const assetType = (elements.assetType.value || "btc").trim().toLowerCase() === "wealth" ? "wealth" : "btc";
+      const btcAmount = parseNumber(elements.btcAmount);
+      const btcPrice = parseNumber(elements.btcPrice);
+      const wealthAmount = parseNumber(elements.wealthAmount);
+      const monthlyExpense = parseNumber(elements.monthlyExpense);
+      const growthAnnual = parseNumber(elements.growthAnnual) / 100;
+      const inflationAnnual = parseNumber(elements.inflationAnnual) / 100;
+      const freedomMode = (elements.freedomMode.value || "sell").trim().toLowerCase() === "borrow" ? "borrow" : "sell";
+      const borrowFeeAnnual = parseNumber(elements.borrowFeeAnnual) / 100;
+      const deviceBattery = clamp(parseNumber(elements.deviceBattery), 0, 100);
+      const birthYear = Math.round(parseNumber(elements.birthYear));
+      const lifeExpectancy = Math.max(0, Math.round(parseNumber(elements.lifeExpectancy)));
+      const todayValue = elements.currentDate.value || getTodayLocalIsoDate();
+
+      const usdWealth = assetType === "wealth" ? wealthAmount : (btcAmount * btcPrice);
+      const freedom = freedomMode === "borrow"
+        ? computeFreedomBorrow(usdWealth, monthlyExpense, inflationAnnual, growthAnnual, borrowFeeAnnual)
+        : computeFreedomSell(usdWealth, monthlyExpense, inflationAnnual, growthAnnual);
+      const life = computeLife(birthYear, lifeExpectancy, todayValue);
+      const coverageText = computeLifetimeCoveredText(freedom, life);
+
+      elements.freedomTitle.textContent = chooseFreedomTitle(ownerName, pixelCtx);
+      elements.deviceBatteryFill.style.width = `${deviceBattery}%`;
+      elements.deviceBatteryText.textContent = `${deviceBattery}%`;
+      elements.coverageValue.textContent = coverageText;
+      elements.btcAmountField.classList.toggle("hidden", assetType !== "btc");
+      elements.btcPriceField.classList.toggle("hidden", assetType !== "btc");
+      elements.wealthAmountField.classList.toggle("hidden", assetType !== "wealth");
+      elements.borrowFeeField.classList.toggle("hidden", freedomMode !== "borrow");
+      elements.borrowFeeAnnual.disabled = freedomMode !== "borrow";
+
+      renderFreedom(freedom);
+      renderLife(life);
+      renderPixelCanvas(ownerName, freedom, life, coverageText, deviceBattery);
+    }
+
+    for (const el of Object.values(elements)) {
+      if (el instanceof HTMLInputElement || el instanceof HTMLSelectElement) {
+        el.addEventListener("input", update);
+        el.addEventListener("change", update);
+      }
+    }
+
+    if (!elements.currentDate.value) {
+      elements.currentDate.value = getTodayLocalIsoDate();
+    }
+
+    update();
+  </script>
+</body>
+</html>

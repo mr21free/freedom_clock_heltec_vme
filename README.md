@@ -1,159 +1,160 @@
-# 🟠 Bitcoin Freedom Clock - Heltec Vision Master E213
+# Freedom Clock
 
-> **Finally, a meaningful stat for humans.**
+Freedom Clock is a low-power e-ink device for the Heltec Vision Master E213 that turns savings into time.
 
-A low-power **Freedom Clock** built on the **Heltec Vision Master E213** (ESP32-S3 + 2.13" e-ink display).
+It shows:
+- expected freedom time
+- expected lifetime left
+- freedom coverage
+- a second details screen with portfolio and life settings
 
-It connects to your local network via Wi-Fi, pulls **BTC price** + your **total BTC balance** over MQTT, and shows one simple output:
+The project supports both:
+- `BTC` mode: wealth is derived from BTC amount and BTC/USD price
+- `WEALTH` mode: wealth is entered directly in USD
 
-**How long could you live for “free” if you sold all BTC today and lived off USD — accounting for inflation?**
+It also supports two withdrawal models:
+- `sell`: the portfolio is spent down monthly while wealth growth and inflation are applied
+- `borrow`: the portfolio is kept as collateral and refinanced yearly with an annual borrowing fee
 
----
+## Photos
 
-## 📸 Photos
+### Main screen
 
-![Freedom Clock showcase - Low time](photos/freedomclock_showcase_low_time.jpeg)
+![Freedom Clock main screen](photos/freedomclock_showcase_screen_1.jpeg)
 
-![Freedom Clock showcase - high time](photos/freedomclock_showcase_high_time.jpeg)
+### Inputs and details screen
 
----
+![Freedom Clock inputs and details screen](photos/freedomclock_showcase_screen_2.jpeg)
 
-## ✨ What it shows
+## What The Device Shows
 
-On the e-ink display:
+Main screen:
+- owner-specific freedom title
+- freedom time in `Y / M / W`
+- expected lifetime left in `Y / M / W`
+- freedom coverage as a percentage
+- device battery percent
 
-- **Years + Months + Weeks** of “freedom time”
-- Battery %
+Second screen:
+- shown by pressing the custom `GPIO21` side button
+- can also wake the device from deep sleep
+- shows asset type, BTC or net worth details, growth, inflation, monthly spending, birth year, life expectancy, and withdrawal mode
 
-No BTC balance or USD net worth is shown on the screen (by design).
+## Privacy And OPSEC
 
----
+The current design is intentionally local-first:
+- no cloud service is required
+- Wi-Fi and MQTT credentials live only in `secrets.h`
+- `secrets.h` is gitignored
+- only the birth year is stored, not the full date of birth
+- BTC mode expects local MQTT topics, so it can run fully on a home network
 
-## 🧠 Concept (how it’s calculated)
+What this means in practice:
+- the repository is reasonably safe to share if `secrets.h` stays private
+- the device still depends on the trust model of your local Wi-Fi and MQTT broker
+- there is no per-user setup portal yet, so personal settings are still compiled into the firmware
 
-This clock models a simple scenario:
+## Hardware
 
-1) You sell your BTC today for USD (at current BTC/USD price)  
-2) You spend a fixed **monthly budget** (e.g. $10,000)  
-3) Your expenses increase every year by **inflation** (default 2%)  
-4) It calculates **how long the USD stash lasts** → displayed as **Years / Months / Weeks**
+- Heltec Vision Master E213
+- 2.13" e-ink display, `250 x 122`
+- ESP32-S3
+- optional 3.7V LiPo battery
 
-This is not meant to be “financial advice”. It’s a *time metric*.
+Product page:
+- https://heltec.org/project/vision-master-e213/
 
----
+## Data Sources
 
-## 🧰 Hardware
+In `BTC` mode, the sketch subscribes to:
 
-- **Heltec Vision Master E213**  
-  ESP32-S3 + 2.13" e-ink display (250×122)  
-  👉 Buy here: https://heltec.org/project/vision-master-e213/
-
-- **3.7 V LiPo battery (JST connector)**  
-  Optional, but recommended for clean wireless placement
-
-No additional hardware required.
-
----
-
-## 🏗 How it works
-
-- ESP32 connects to Wi-Fi
-- Subscribes to MQTT topics:
-  - BTC price (USD)
-  - Total BTC balance (sum of wallets)
-- Computes freedom time with inflation
-- Updates the e-ink screen
-- Enters deep sleep to save battery
-
----
-
-## 📡 MQTT topics
-
-### Required topics
-
-```
+```text
 home/bitcoin/price/usd
 home/bitcoin/wallets/total_btc
 ```
 
-**Use retained MQTT messages** so the device receives the latest values immediately after waking.
+Use retained MQTT messages so the device receives the latest values quickly after waking.
 
----
+In `WEALTH` mode, MQTT market data is not required for the main calculation.
 
-## 🔧 Configuration (expenses, inflation, update interval)
+## Main Firmware Configuration
 
-Edit these constants in the `.ino`:
+Edit these constants in [Freedom_Clock_HeltecVME213.ino](Freedom_Clock_HeltecVME213.ino):
 
 ```cpp
-// Base monthly expense in USD (today)
 static constexpr float MONTHLY_EXP_USD = 10000.0f;
-
-// Annual inflation rate (0.02 = 2%)
 static constexpr float INFLATION_ANNUAL = 0.02f;
+static constexpr float WEALTH_GROWTH_ANNUAL = 0.10f;
 
-// Deep sleep interval (minutes)
-static constexpr uint64_t SLEEP_MINUTES = 1440;
+static constexpr AssetMode PORTFOLIO_ASSET_MODE = ASSET_MODE_BTC;
+static constexpr PortfolioUseMode PORTFOLIO_USE_MODE = PORTFOLIO_USE_MODE_SELL;
+static constexpr float DEFAULT_WEALTH_USD = 1500000.0f;
+static constexpr float BORROW_FEE_ANNUAL = 0.08f;
+
+static constexpr char OWNER_NAME[] = "MIKE";
+static constexpr int OWNER_BIRTH_YEAR = 1980;
+static constexpr int OWNER_LIFE_EXPECTANCY_YEARS = 85;
 ```
 
-Examples:
-- `MONTHLY_EXP_USD = 8000` → more freedom time
-- `INFLATION_ANNUAL = 0.03` → less freedom time
-- `SLEEP_MINUTES = 15` → more frequent updates, lower battery life
+Current sample defaults are:
+- owner name: `MIKE`
+- monthly spending: `10000 USD`
+- birth year: `1980`
+- life expectancy: `85`
 
----
+## Secrets
 
-## 🔐 Configuration & Secrets
-
-Wi-Fi and MQTT credentials are **not committed** to the repository.
-
-Create:
-
-```
-secrets.h
-```
-
-Example:
+Create `secrets.h` locally:
 
 ```cpp
-static const char* WIFI_SSID     = "YOUR_WIFI_NAME";
-static const char* WIFI_PASS     = "YOUR_WIFI_PASSWORD";
+#pragma once
 
-static const char* MQTT_SERVER   = "192.168.1.144";
-static const int   MQTT_PORT     = 1883;
-static const char* MQTT_USER     = "mqtt";
-static const char* MQTT_PASS     = "mqtt";
+static const char* WIFI_SSID   = "YOUR_WIFI_NAME";
+static const char* WIFI_PASS   = "YOUR_WIFI_PASSWORD";
+
+static const char* MQTT_SERVER = "192.168.1.144";
+static const int   MQTT_PORT   = 1883;
+static const char* MQTT_USER   = "mqtt";
+static const char* MQTT_PASS   = "mqtt";
 ```
 
-`secrets.h` should be ignored via `.gitignore`.
+## Browser Sandbox
 
----
+[freedom-clock.html](freedom-clock.html) is a local testing sandbox for the device logic and layout.
 
-## 🧩 Where the MQTT data comes from
+It includes:
+- portfolio and life inputs
+- sell vs borrow comparison
+- BTC vs wealth mode
+- a styled screen preview
+- a `250 x 122` pixel canvas sandbox for layout tuning
 
-Typical setup:
+Use it to tune coordinates before reflashing the device.
 
-- **Bitcoin Core / node script** publishes:
-  - `home/bitcoin/price/usd`
-  - `home/bitcoin/wallets/total_btc` (sum of multiple wallets)
+## Build And Flash
 
-This repo assumes your node already publishes these topics (or Home Assistant does).
+1. Install the Heltec ESP32 board support and libraries.
+2. Open `Freedom_Clock_HeltecVME213.ino` in Arduino IDE.
+3. Select the Heltec Vision Master E213 board.
+4. Add `secrets.h`.
+5. Flash the device.
 
----
+## Current Status
 
-## ✅ Build & Flash
+What is already in good shape:
+- local-first design
+- RTC fallback for price, balance, and time
+- unique MQTT client id per device
+- second screen and button wake support
+- HTML sandbox for calculation and layout iteration
 
-1) Install Heltec ESP32 framework (per Heltec docs)
-2) Open the `.ino` in Arduino IDE
-3) Select board: **Heltec Vision Master E213**
-4) Add your `secrets.h`
-5) Flash the device
+What is still not fully product-ready:
+- customer configuration is still hard-coded in firmware
+- no captive portal or on-device setup flow yet
+- no automated tests
+- no compile verification in this workspace
+- no explicit stale-data warning on the screen when MQTT values are old
 
----
-
-## 📜 License
+## License
 
 MIT
-
----
-
-🟠 If you build one, fork it, improve it, and make it yours.
