@@ -16,6 +16,10 @@ It also supports two withdrawal models:
 - `sell`: the portfolio is spent down monthly while wealth growth and inflation are applied
 - `borrow`: the portfolio is kept as collateral and refinanced yearly with an annual borrowing fee
 
+It also supports two display themes:
+- `light`: white background with black text
+- `dark`: black background with white text
+
 ## Photos
 
 ### Main screen
@@ -34,6 +38,7 @@ Main screen:
 - expected lifetime left in `Y / M / W`
 - freedom coverage as a percentage
 - device battery percent
+- selected light or dark theme
 
 Second screen:
 - shown by pressing the custom `GPIO21` side button
@@ -53,6 +58,11 @@ What this means in practice:
 - the repository is reasonably safe to share if `secrets.h` stays private
 - the device still depends on the trust model of your local Wi-Fi and MQTT broker
 - there is no per-user setup portal yet, so personal settings are still compiled into the firmware
+
+Recommended before publishing your own fork:
+- replace the tracked sample owner values with your own only in a private local copy
+- keep `secrets.h` untracked and never paste live Wi-Fi or MQTT credentials into screenshots
+- prefer placeholder hosts such as `mqtt.local` in docs and examples
 
 ## Hardware
 
@@ -88,19 +98,25 @@ static constexpr float WEALTH_GROWTH_ANNUAL = 0.10f;
 
 static constexpr AssetMode PORTFOLIO_ASSET_MODE = ASSET_MODE_BTC;
 static constexpr PortfolioUseMode PORTFOLIO_USE_MODE = PORTFOLIO_USE_MODE_SELL;
-static constexpr float DEFAULT_WEALTH_USD = 1500000.0f;
+static constexpr DisplayThemeMode DISPLAY_THEME_MODE = DISPLAY_THEME_DARK;
+static constexpr float DEFAULT_WEALTH_USD = 1000000.0f;
 static constexpr float BORROW_FEE_ANNUAL = 0.08f;
 
-static constexpr char OWNER_NAME[] = "MIKE";
-static constexpr int OWNER_BIRTH_YEAR = 1980;
+static constexpr char OWNER_NAME[] = "OWNER";
+static constexpr int OWNER_BIRTH_YEAR = 1990;
 static constexpr int OWNER_LIFE_EXPECTANCY_YEARS = 85;
 ```
 
 Current sample defaults are:
-- owner name: `MIKE`
-- monthly spending: `10000 USD`
-- birth year: `1980`
+- owner name: `OWNER`
+- monthly spending: `14000 USD`
+- display theme: `DARK`
+- birth year: `1990`
 - life expectancy: `85`
+
+To switch themes:
+- use `DISPLAY_THEME_DARK` for a black screen with white text
+- use `DISPLAY_THEME_LIGHT` for a white screen with black text
 
 ## Secrets
 
@@ -112,10 +128,10 @@ Create `secrets.h` locally:
 static const char* WIFI_SSID   = "YOUR_WIFI_NAME";
 static const char* WIFI_PASS   = "YOUR_WIFI_PASSWORD";
 
-static const char* MQTT_SERVER = "192.168.1.144";
+static const char* MQTT_SERVER = "mqtt.local";
 static const int   MQTT_PORT   = 1883;
-static const char* MQTT_USER   = "mqtt";
-static const char* MQTT_PASS   = "mqtt";
+static const char* MQTT_USER   = "YOUR_MQTT_USER";
+static const char* MQTT_PASS   = "YOUR_MQTT_PASSWORD";
 ```
 
 ## Browser Sandbox

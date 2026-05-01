@@ -13,7 +13,7 @@
 // ============================================================
 
 // Base monthly expense in USD (today)
-static constexpr float MONTHLY_EXP_USD = 10000.0f;
+static constexpr float MONTHLY_EXP_USD = 14000.0f;
 
 // Annual inflation rate (0.02 = 2%)
 static constexpr float INFLATION_ANNUAL = 0.02f;
@@ -31,18 +31,27 @@ enum PortfolioUseMode {
   PORTFOLIO_USE_MODE_BORROW = 1
 };
 
+enum DisplayThemeMode {
+  DISPLAY_THEME_LIGHT = 0,
+  DISPLAY_THEME_DARK = 1
+};
+
 // Choose whether the portfolio is sourced from BTC amount + BTC price,
 // or from a directly configured USD net worth value.
 static constexpr AssetMode PORTFOLIO_ASSET_MODE = ASSET_MODE_BTC;
 static constexpr PortfolioUseMode PORTFOLIO_USE_MODE = PORTFOLIO_USE_MODE_SELL;
+// Select the screen theme for both display layouts.
+// Use DISPLAY_THEME_DARK for a black background with white text,
+// or DISPLAY_THEME_LIGHT for the original white background with black text.
+static constexpr DisplayThemeMode DISPLAY_THEME_MODE = DISPLAY_THEME_DARK;
 static constexpr float DEFAULT_WEALTH_USD = 1000000.0f;
 static constexpr float BORROW_FEE_ANNUAL = 0.08f;
 
 // Person profile shown on the display.
 // Privacy-friendly version: only birth year is stored.
 // Life calculations assume 1.1.<birth year>.
-static constexpr char OWNER_NAME[] = "MIKE";
-static constexpr int OWNER_BIRTH_YEAR = 1980;
+static constexpr char OWNER_NAME[] = "OWNER";
+static constexpr int OWNER_BIRTH_YEAR = 1990;
 static constexpr int OWNER_LIFE_EXPECTANCY_YEARS = 85;
 
 // Deep sleep interval
@@ -112,6 +121,11 @@ struct LifeStats {
   int remainingPercent;
 };
 
+struct DisplayThemeColors {
+  uint16_t foreground;
+  uint16_t background;
+};
+
 // ============================================================
 // Utilities
 // ============================================================
@@ -124,6 +138,21 @@ static int clampInt(int value, int minValue, int maxValue) {
   if (value < minValue) return minValue;
   if (value > maxValue) return maxValue;
   return value;
+}
+
+static DisplayThemeColors getDisplayThemeColors(DisplayThemeMode themeMode) {
+  if (themeMode == DISPLAY_THEME_DARK) {
+    return { WHITE, BLACK };
+  }
+  return { BLACK, WHITE };
+}
+
+static void prepareScreen(DisplayThemeMode themeMode) {
+  const DisplayThemeColors theme = getDisplayThemeColors(themeMode);
+  display.clear();
+  display.setRotation(1);
+  display.fillScreen(theme.background);
+  display.setTextColor(theme.foreground, theme.background);
 }
 
 static int estimateTextWidthSize1(const char* text) {
@@ -416,19 +445,30 @@ static void computeLongevityWithInflation(
 // Display Battery Icon 
 // ============================================================
 
-static void drawBatteryIcon(int x, int y, int pct, int bodyW, int bodyH, int tipW, int tipH) {
+static void drawBatteryIcon(
+  int x,
+  int y,
+  int pct,
+  int bodyW,
+  int bodyH,
+  int tipW,
+  int tipH,
+  DisplayThemeMode themeMode
+) {
   // Clamp percent
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
+
+  const DisplayThemeColors theme = getDisplayThemeColors(themeMode);
 
   // Inner padding
   const int pad = (bodyW >= 28) ? 3 : 2;
 
   // Battery outline
-  display.drawRoundRect(x, y, bodyW, bodyH, 3, BLACK);
+  display.drawRoundRect(x, y, bodyW, bodyH, 3, theme.foreground);
 
   // Battery tip
-  display.fillRect(x + bodyW, y + (bodyH - tipH) / 2, tipW, tipH, BLACK);
+  display.fillRect(x + bodyW, y + (bodyH - tipH) / 2, tipW, tipH, theme.foreground);
 
   // Inner area
   const int innerX = x + pad;
@@ -437,12 +477,12 @@ static void drawBatteryIcon(int x, int y, int pct, int bodyW, int bodyH, int tip
   const int innerH = bodyH - (pad * 2);
 
   // Clear inside first
-  display.fillRect(innerX, innerY, innerW, innerH, WHITE);
+  display.fillRect(innerX, innerY, innerW, innerH, theme.background);
 
   // Fill based on battery %
   int fillW = (innerW * pct) / 100;
   if (fillW > 0) {
-    display.fillRect(innerX, innerY, fillW, innerH, BLACK);
+    display.fillRect(innerX, innerY, fillW, innerH, theme.foreground);
   }
 }
 
@@ -461,6 +501,7 @@ static void drawFreedomClock(
   int coveredPercent,
   int deviceBatteryPct
 ) {
+  const DisplayThemeColors theme = getDisplayThemeColors(DISPLAY_THEME_MODE);
   char freedomTitle[40];
   char lifeTitle[32];
   char percentText[8];
@@ -515,21 +556,19 @@ static void drawFreedomClock(
     snprintf(percentText, sizeof(percentText), "%d%%", clampInt(coveredPercent, 0, 999));
   }
 
-  display.clear();
-  display.setRotation(1);
-  display.setTextColor(BLACK);
+  prepareScreen(DISPLAY_THEME_MODE);
 
   display.setTextSize(1);
   display.setCursor(LEFT_X, 8);
   display.println(freedomTitle);
 
-  drawBatteryIcon(BATTERY_X, 5, deviceBatteryPct, 22, 10, 2, 5);
+  drawBatteryIcon(BATTERY_X, 5, deviceBatteryPct, 22, 10, 2, 5, DISPLAY_THEME_MODE);
   display.setCursor(226, 7);
   display.setTextSize(1);
   display.print(deviceBatteryPct);
   display.print("%");
 
-  display.drawLine(DIVIDER_X, 12, DIVIDER_X, 116, BLACK);
+  display.drawLine(DIVIDER_X, 12, DIVIDER_X, 116, theme.foreground);
 
   int x = 0;
   if (freedomHitCap) {
@@ -572,7 +611,7 @@ static void drawFreedomClock(
     display.print("W");
   }
 
-  display.drawLine(LEFT_X, MID_LINE_Y, DIVIDER_X - 8, MID_LINE_Y, BLACK);
+  display.drawLine(LEFT_X, MID_LINE_Y, DIVIDER_X - 8, MID_LINE_Y, theme.foreground);
 
   display.setTextSize(1);
   display.setCursor(LEFT_X, LIFE_TITLE_Y);
@@ -637,14 +676,12 @@ static void drawInfoScreen(
   static constexpr int LABEL_X = 10;
   static constexpr int VALUE_X = 142;
   static constexpr int ROW_Y0 = 5;
-  static constexpr int ROW_STEP = 14;
+  static constexpr int ROW_STEP = 13;
 
-  display.clear();
-  display.setRotation(1);
-  display.setTextColor(BLACK);
+  prepareScreen(DISPLAY_THEME_MODE);
 
   display.setTextSize(1);
-  drawBatteryIcon(200, 5, deviceBatteryPct, 22, 10, 2, 5);
+  drawBatteryIcon(200, 5, deviceBatteryPct, 22, 10, 2, 5, DISPLAY_THEME_MODE);
   display.setCursor(226, 7);
   display.print(deviceBatteryPct);
   display.print("%");
@@ -706,8 +743,13 @@ static void drawInfoScreen(
   display.print(value);
 
   display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 7));
-  display.print("WITHDRAWAL MODE:");
+  display.print("DISPLAY MODE:");
   display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 7));
+  display.print((DISPLAY_THEME_MODE == DISPLAY_THEME_DARK) ? "DARK" : "LIGHT");
+
+  display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 8));
+  display.print("WITHDRAWAL MODE:");
+  display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 8));
   if (portfolioUseMode == PORTFOLIO_USE_MODE_BORROW) {
     snprintf(value, sizeof(value), "BORROW YEARLY (%.1f%%/Y)", borrowFeeAnnual * 100.0f);
   } else {
