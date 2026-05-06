@@ -226,7 +226,7 @@ This keeps updates local and easy, without asking normal users to run the produc
 Build public manual-update packages on your Mac with:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ```
 
 That creates a gitignored output folder under:
@@ -279,7 +279,7 @@ Factory reset clears saved settings and history, but it does not undo hardware e
 ### Mac provisioning tool
 
 This repo now includes a purpose-built Mac tool for production provisioning:
-- [FreedomClockSecurityTool.command](FreedomClockSecurityTool.command)
+- [tools/FreedomClockSecurityTool.command](tools/FreedomClockSecurityTool.command)
 - [tools/freedom_clock_security_tool.py](tools/freedom_clock_security_tool.py)
 
 It creates and uses a gitignored workspace at `provisioning-workdir/` for:
@@ -292,19 +292,19 @@ It creates and uses a gitignored workspace at `provisioning-workdir/` for:
 Typical flow:
 
 ```bash
-./FreedomClockSecurityTool.command doctor
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
-./FreedomClockSecurityTool.command bootstrap-idf
-./FreedomClockSecurityTool.command build-secure-boot-project
-./FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
-./FreedomClockSecurityTool.command provision-staging --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
-./FreedomClockSecurityTool.command provision-production --port /dev/cu.usbmodemXXXX --device-id fc-001
+./tools/FreedomClockSecurityTool.command doctor
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command bootstrap-idf
+./tools/FreedomClockSecurityTool.command build-secure-boot-project
+./tools/FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
+./tools/FreedomClockSecurityTool.command provision-staging --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
+./tools/FreedomClockSecurityTool.command provision-production --port /dev/cu.usbmodemXXXX --device-id fc-001
 ```
 
 Later wired updates for an already locked device use the same tool:
 
 ```bash
-./FreedomClockSecurityTool.command update-secure-device --port /dev/cu.usbmodemXXXX --device-id fc-001
+./tools/FreedomClockSecurityTool.command update-secure-device --port /dev/cu.usbmodemXXXX --device-id fc-001
 ```
 
 Notes:

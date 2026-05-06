@@ -36,7 +36,7 @@ Do not publish every local test package. Published Releases are for versions you
 2. Build the local firmware package:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ```
 
 3. Upload the `open` package through the device setup page.
@@ -63,13 +63,13 @@ git push origin v2026.05.05.8
 4. Dry-run the GitHub Release publish command:
 
 ```bash
-./FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.8
 ```
 
 5. If the dry-run output looks correct, publish the real GitHub Release:
 
 ```bash
-./FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.8 --confirm-publish
+./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.8 --confirm-publish
 ```
 
 That uploads:

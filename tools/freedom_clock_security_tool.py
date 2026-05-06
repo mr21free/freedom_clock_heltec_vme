@@ -626,7 +626,7 @@ def build_secure_boot_project(args: argparse.Namespace) -> Path:
     if not export_script.exists():
         raise ToolError(
             f"ESP-IDF is not ready at {idf_root}. Run:\n"
-            f"  ./FreedomClockSecurityTool.command bootstrap-idf\n"
+            f"  ./tools/FreedomClockSecurityTool.command bootstrap-idf\n"
             f"and then rerun build-secure-boot-project."
         )
 
@@ -677,7 +677,7 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
             raise ToolError(
                 f"Secure Boot bootloader was not found at {secure_boot_bootloader}.\n"
                 f"Run:\n"
-                f"  ./FreedomClockSecurityTool.command build-secure-boot-project\n"
+                f"  ./tools/FreedomClockSecurityTool.command build-secure-boot-project\n"
                 f"or pass --secure-boot-bootloader PATH."
             )
         print_step("Signing the secure-boot bootloader")

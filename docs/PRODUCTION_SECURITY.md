@@ -15,7 +15,7 @@ What a normal upload does give you:
 ## Purpose-Built Mac Tool
 
 This repo now includes a host-side provisioning tool:
-- [FreedomClockSecurityTool.command](FreedomClockSecurityTool.command)
+- [tools/FreedomClockSecurityTool.command](tools/FreedomClockSecurityTool.command)
 - [tools/freedom_clock_security_tool.py](tools/freedom_clock_security_tool.py)
 
 The tool is meant to replace the fragile copy-paste workflow with one guided path on your Mac.
@@ -37,26 +37,26 @@ Everything sensitive lands in the gitignored `provisioning-workdir/` directory.
 Check the local host toolchain:
 
 ```bash
-./FreedomClockSecurityTool.command doctor
+./tools/FreedomClockSecurityTool.command doctor
 ```
 
 Build the user-facing manual firmware update package:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ```
 
 Bootstrap a local ESP-IDF checkout for the secure-boot helper bootloader:
 
 ```bash
-./FreedomClockSecurityTool.command bootstrap-idf
-./FreedomClockSecurityTool.command build-secure-boot-project
+./tools/FreedomClockSecurityTool.command bootstrap-idf
+./tools/FreedomClockSecurityTool.command build-secure-boot-project
 ```
 
 Do a no-risk dry run first:
 
 ```bash
-./FreedomClockSecurityTool.command dry-run-provisioning \
+./tools/FreedomClockSecurityTool.command dry-run-provisioning \
   --port /dev/cu.usbmodemXXXX \
   --device-id fc-stage-001
 ```
@@ -64,7 +64,7 @@ Do a no-risk dry run first:
 Provision a safer staging board first:
 
 ```bash
-./FreedomClockSecurityTool.command provision-staging \
+./tools/FreedomClockSecurityTool.command provision-staging \
   --port /dev/cu.usbmodemXXXX \
   --device-id fc-stage-001
 ```
@@ -72,7 +72,7 @@ Provision a safer staging board first:
 Provision a real production device:
 
 ```bash
-./FreedomClockSecurityTool.command provision-production \
+./tools/FreedomClockSecurityTool.command provision-production \
   --port /dev/cu.usbmodemXXXX \
   --device-id fc-001
 ```
@@ -80,7 +80,7 @@ Provision a real production device:
 Provision a staging board without the final secure-download lock:
 
 ```bash
-./FreedomClockSecurityTool.command provision-production \
+./tools/FreedomClockSecurityTool.command provision-production \
   --port /dev/cu.usbmodemXXXX \
   --device-id fc-stage-001 \
   --skip-final-secure-download
@@ -89,7 +89,7 @@ Provision a staging board without the final secure-download lock:
 Update an already locked production device later over cable:
 
 ```bash
-./FreedomClockSecurityTool.command update-secure-device \
+./tools/FreedomClockSecurityTool.command update-secure-device \
   --port /dev/cu.usbmodemXXXX \
   --device-id fc-001
 ```
