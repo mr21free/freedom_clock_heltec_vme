@@ -150,6 +150,7 @@ The setup page also includes a `Firmware Update` section:
 - saved settings stay on the device
 - security-hardened devices should use signed update files
 - a `Check Latest Release` button can fetch the newest published GitHub Release and show its release notes directly on the setup page
+- when the published release is newer, `Install Latest Firmware` can download the matching `open` or `secure` package directly from GitHub and apply it
 - that release check needs working Wi-Fi with internet access while the portal is open
 
 To reopen setup mode later:
@@ -226,7 +227,7 @@ This keeps updates local and easy, without asking normal users to run the produc
 Build public manual-update packages on your Mac with:
 
 ```bash
-./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.9
 ```
 
 That creates a gitignored output folder under:
@@ -293,7 +294,7 @@ Typical flow:
 
 ```bash
 ./tools/FreedomClockSecurityTool.command doctor
-./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.9
 ./tools/FreedomClockSecurityTool.command bootstrap-idf
 ./tools/FreedomClockSecurityTool.command build-secure-boot-project
 ./tools/FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001

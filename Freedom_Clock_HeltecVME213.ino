@@ -129,6 +129,8 @@ static constexpr uint16_t WIFI_POLL_DELAY_MS = 250;
 static constexpr uint16_t MQTT_RETRY_DELAY_MS = 500;
 static constexpr uint16_t NTP_SYNC_TIMEOUT_MS = 10000;
 static constexpr uint16_t PRICE_HTTP_TIMEOUT_MS = 8000;
+static constexpr uint16_t FIRMWARE_HTTP_TIMEOUT_MS = 20000;
+static constexpr uint32_t FIRMWARE_DOWNLOAD_IDLE_TIMEOUT_MS = 15000;
 static constexpr uint16_t BUTTON_POLL_DELAY_MS = 20;
 static constexpr uint32_t CONFIG_BUTTON_HOLD_MS = 2500;
 static constexpr uint32_t FACTORY_RESET_HOLD_MS = 10000;
@@ -142,7 +144,7 @@ static constexpr char CONFIG_NAMESPACE[] = "freedomclk";
 static constexpr char HISTORY_NAMESPACE[] = "wealthhist";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.05.8";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.05.9";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme213/releases";
 static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme213/releases/latest";
 static constexpr char GITHUB_API_VERSION[] = "2022-11-28";
@@ -273,6 +275,8 @@ struct GitHubReleaseInfo {
   String name;
   String body;
   String htmlUrl;
+  String openBinUrl;
+  String secureBinUrl;
 };
 
 static DeviceConfig deviceConfig = {};
@@ -296,6 +300,7 @@ static bool hasSetupPinConfigured(const DeviceConfig& cfg);
 static void handlePortalFirmwareUpload();
 static void handlePortalFirmwareUploadComplete();
 static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* errorBuf, size_t errorBufSize);
+static bool selectReleaseFirmwareUrl(const GitHubReleaseInfo& releaseInfo, bool securePackage, String& outUrl, String& outPackageLabel);
 
 // ============================================================
 // Utilities
@@ -1885,9 +1890,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String("<div class=\"row\"><strong>Current firmware:</strong> ") + FIRMWARE_VERSION + "</div>";
   html += "<div class=\"row\"><strong>Latest published release:</strong> <span id=\"release_latest_version\">--</span></div>";
   html += "<div class=\"row\"><strong>Release title:</strong> <span id=\"release_name\">--</span></div>";
+  html += "<div class=\"row\"><strong>Package for this device:</strong> <span id=\"release_package\">--</span></div>";
   html += "<div class=\"row\"><strong>Changes and improvements:</strong></div>";
   html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
   html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>Latest release URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
+  html += "<div class=\"actions\"><button id=\"online_update_button\" type=\"button\" disabled>Install Latest Firmware</button></div>";
   html += "</div>";
   html += "</form></section>";
   html += "<script>";
@@ -1924,7 +1931,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const releaseSummary=document.getElementById('release_summary');";
   html += "const releaseLatestVersion=document.getElementById('release_latest_version');";
   html += "const releaseName=document.getElementById('release_name');";
+  html += "const releasePackage=document.getElementById('release_package');";
   html += "const releaseNotes=document.getElementById('release_notes');";
+  html += "const onlineUpdateButton=document.getElementById('online_update_button');";
   html += "const releasesUrlText=document.getElementById('releases_url_text');";
   html += "const copyReleasesUrlButton=document.getElementById('copy_releases_url_button');";
   html += "const latestReleaseUrlRow=document.getElementById('latest_release_url_row');";
@@ -1941,12 +1950,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function syncOwnerUppercase(){if(ownerInput)ownerInput.value=(ownerInput.value||'').toUpperCase();}";
   html += "function normalizeVersion(text){return String(text||'').trim().replace(/^v/i,'');}";
   html += "async function copyText(text,label){const value=String(text||'').trim();if(!value){setReleaseStatus('Nothing to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{const area=document.createElement('textarea');area.value=value;area.setAttribute('readonly','');area.style.position='fixed';area.style.left='-9999px';document.body.appendChild(area);area.select();document.execCommand('copy');document.body.removeChild(area);}setReleaseStatus((label||'Link')+' copied. If iOS blocks clipboard access, select the URL text manually.','ok');}catch(err){setReleaseStatus('Copy failed. Select the URL text manually and copy it from there.','err');}}";
-  html += "function hideReleaseSummary(){if(releaseSummary)releaseSummary.classList.add('hidden');if(latestReleaseUrlRow)latestReleaseUrlRow.classList.add('hidden');}";
-  html += "function renderReleaseInfo(data){const latestTag=String((data&&data.tag)||'').trim();const latestTitle=String((data&&data.name)||latestTag||'Unnamed release').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseName)releaseName.textContent=latestTitle;if(releaseNotes)releaseNotes.textContent=notes;if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
+  html += "function hideReleaseSummary(){if(releaseSummary)releaseSummary.classList.add('hidden');if(latestReleaseUrlRow)latestReleaseUrlRow.classList.add('hidden');if(onlineUpdateButton)onlineUpdateButton.disabled=true;}";
+  html += "function renderReleaseInfo(data){const latestTag=String((data&&data.tag)||'').trim();const latestTitle=String((data&&data.name)||latestTag||'Unnamed release').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();const packageLabel=String((data&&data.package)||'').trim();const assetAvailable=!!(data&&data.asset_available);const newer=!!(data&&data.newer);if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseName)releaseName.textContent=latestTitle;if(releasePackage)releasePackage.textContent=packageLabel||(assetAvailable?'Available':'Not found');if(releaseNotes)releaseNotes.textContent=notes;if(onlineUpdateButton)onlineUpdateButton.disabled=!(assetAvailable&&newer);if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
   html += GITHUB_RELEASES_URL;
   html += "';if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
   html += FIRMWARE_VERSION;
-  html += "');setReleaseStatus(latestNormalized&&latestNormalized===currentNormalized?'This device already matches the latest published release.':'Latest published release loaded.','ok');}";
+  html += "');if(!assetAvailable){setReleaseStatus('Latest release loaded, but the matching firmware package was not found. Use manual download if needed.','err');return;}if(!newer){setReleaseStatus(latestNormalized&&latestNormalized===currentNormalized?'This device already matches the latest published release.':'Latest published release is older than this firmware. Manual upload is still available.','info');return;}setReleaseStatus('New firmware is available. You can install it directly or use manual download.','ok');}";
   html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
   html += "function updateRefreshControls(){if(!refreshValueInput)return;const settings=refreshSettingsForUnit();refreshValueInput.min=String(settings.min);refreshValueInput.max=String(settings.max);refreshValueInput.step='1';let value=parseInt(refreshValueInput.value||'',10);if(!Number.isFinite(value))value=settings.min;if(value<settings.min)value=settings.min;if(value>settings.max)value=settings.max;refreshValueInput.value=String(value);if(refreshHint)refreshHint.textContent=settings.hint;}";
   html += "function update(){";
@@ -2006,6 +2015,19 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "}catch(err){setReleaseStatus('Release check failed. Keep this phone connected and make sure the device can reach the internet over Wi-Fi.','err');}";
   html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
   html += "}";
+  html += "async function installLatestFirmware(){";
+  html += "if(!window.confirm('Install the latest Freedom Clock firmware now? Keep this phone connected until the device restarts.'))return;";
+  html += "if(onlineUpdateButton)onlineUpdateButton.disabled=true;";
+  html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
+  html += "setReleaseStatus('Downloading and installing firmware. Keep this phone connected. The device will reboot when finished.','info');";
+  html += "try{";
+  html += "const response=await fetch('/firmware-online',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
+  html += "const data=await response.json();";
+  html += "if(!data.ok){setReleaseStatus(data.message||'Firmware install failed.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;return;}";
+  html += "setReleaseStatus(data.message||'Firmware installed. Rebooting ...','ok');";
+  html += "}catch(err){setReleaseStatus('Firmware install request failed. Use manual upload if the device does not restart.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;}";
+  html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
+  html += "}";
   html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;invalidate('Test the current settings before saving.');}";
   html += "if(asset) asset.addEventListener('change', update);";
   html += "if(mode) mode.addEventListener('change', update);";
@@ -2019,6 +2041,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){if(firmwareUploadButton)firmwareUploadButton.disabled=false;setFirmwareStatus('', 'info');});";
   html += "if(firmwareForm){firmwareForm.addEventListener('submit', function(event){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){event.preventDefault();setFirmwareStatus('Choose a firmware .bin file first.','err');return;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){event.preventDefault();setFirmwareStatus('Firmware file must end with .bin.','err');return;}if(firmwareUploadButton)firmwareUploadButton.disabled=true;setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');});}";
   html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
+  html += "if(onlineUpdateButton) onlineUpdateButton.addEventListener('click', installLatestFirmware);";
   html += "if(copyReleasesUrlButton) copyReleasesUrlButton.addEventListener('click', function(){copyText(releasesUrlText?releasesUrlText.textContent:'','GitHub Releases URL');});";
   html += "if(copyLatestReleaseUrlButton) copyLatestReleaseUrlButton.addEventListener('click', function(){copyText(latestReleaseUrlText?latestReleaseUrlText.textContent:'','Latest release URL');});";
   html += "if(scanButton) scanButton.addEventListener('click', refreshWifiList);";
@@ -3062,6 +3085,157 @@ static void handlePortalFirmwareUploadComplete() {
   ));
 }
 
+static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, size_t errorBufSize) {
+  if (firmwareUrl.length() == 0) {
+    snprintf(errorBuf, errorBufSize, "Firmware download URL is missing.");
+    return false;
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    snprintf(errorBuf, errorBufSize, "Wi-Fi is not connected.");
+    return false;
+  }
+
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(FIRMWARE_HTTP_TIMEOUT_MS);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  if (!http.begin(secureClient, firmwareUrl)) {
+    snprintf(errorBuf, errorBufSize, "Could not start firmware download.");
+    return false;
+  }
+
+  http.addHeader("Accept", "application/octet-stream");
+  http.addHeader("User-Agent", "FreedomClock/2026");
+
+  const int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    snprintf(errorBuf, errorBufSize, "Firmware download failed (%d).", httpCode);
+    http.end();
+    return false;
+  }
+
+  const int contentLength = http.getSize();
+  if (!Update.begin(contentLength > 0 ? (size_t)contentLength : UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+    formatFirmwareUpdateError(errorBuf, errorBufSize);
+    http.end();
+    return false;
+  }
+
+  WiFiClient* stream = http.getStreamPtr();
+  uint8_t buffer[1024];
+  size_t totalWritten = 0;
+  int remaining = contentLength;
+  uint32_t lastDataMs = millis();
+
+  while (http.connected() && (remaining > 0 || contentLength <= 0)) {
+    const size_t available = stream->available();
+    if (available > 0) {
+      const size_t toRead = (available > sizeof(buffer)) ? sizeof(buffer) : available;
+      const int bytesRead = stream->readBytes(buffer, toRead);
+      if (bytesRead <= 0) {
+        delay(1);
+        continue;
+      }
+      if (Update.write(buffer, (size_t)bytesRead) != (size_t)bytesRead) {
+        formatFirmwareUpdateError(errorBuf, errorBufSize);
+        Update.abort();
+        http.end();
+        return false;
+      }
+      totalWritten += (size_t)bytesRead;
+      if (remaining > 0) remaining -= bytesRead;
+      lastDataMs = millis();
+      refreshPortalUnlockSession();
+      continue;
+    }
+
+    if ((millis() - lastDataMs) > FIRMWARE_DOWNLOAD_IDLE_TIMEOUT_MS) {
+      snprintf(errorBuf, errorBufSize, "Firmware download timed out.");
+      Update.abort();
+      http.end();
+      return false;
+    }
+    delay(5);
+  }
+
+  if (contentLength > 0 && totalWritten != (size_t)contentLength) {
+    snprintf(errorBuf, errorBufSize, "Firmware download ended early.");
+    Update.abort();
+    http.end();
+    return false;
+  }
+
+  if (totalWritten == 0) {
+    snprintf(errorBuf, errorBufSize, "Firmware download returned no data.");
+    Update.abort();
+    http.end();
+    return false;
+  }
+
+  if (!Update.end(true)) {
+    formatFirmwareUpdateError(errorBuf, errorBufSize);
+    http.end();
+    return false;
+  }
+
+  http.end();
+  errorBuf[0] = '\0';
+  return true;
+}
+
+static void handlePortalFirmwareOnline() {
+  if (requirePortalUnlock("Enter the setup PIN to update firmware.")) {
+    return;
+  }
+
+  DeviceConfig submitted = deviceConfig;
+  loadSubmittedPortalConfig(submitted);
+
+  if (!hasText(submitted.wifiSsid)) {
+    portalSendJson(false, "Wi-Fi required\nAdd working Wi-Fi first to install online updates.");
+    return;
+  }
+
+  if (!connectWiFi(submitted, WIFI_CONNECT_TIMEOUT_MS, true)) {
+    portalSendJson(false, "Wi-Fi failed\nCheck the SSID and password, then try again.");
+    return;
+  }
+
+  GitHubReleaseInfo releaseInfo;
+  char errorMessage[160];
+  if (!fetchLatestGitHubReleaseInfo(releaseInfo, errorMessage, sizeof(errorMessage))) {
+    String error = String("Wi-Fi OK\nRELEASE CHECK failed\n") + errorMessage;
+    portalSendJson(false, error.c_str());
+    return;
+  }
+
+  String firmwareUrl;
+  String packageLabel;
+  if (!isReleaseNewerThanCurrent(releaseInfo)) {
+    portalSendJson(false, "Latest published release is not newer than the firmware already on this device.");
+    return;
+  }
+
+  if (!selectReleaseFirmwareUrl(releaseInfo, hardwareSecureBootActive, firmwareUrl, packageLabel)) {
+    portalSendJson(false, "Latest release loaded, but the matching firmware package was not found.");
+    return;
+  }
+
+  if (!installFirmwareFromUrl(firmwareUrl, errorMessage, sizeof(errorMessage))) {
+    String error = String("Wi-Fi OK\nRELEASE CHECK OK\nFIRMWARE DOWNLOAD failed\n") + errorMessage;
+    portalSendJson(false, error.c_str());
+    return;
+  }
+
+  checkpointPortalUnixTime();
+  portalExitAction = PORTAL_EXIT_ACTION_FIRMWARE_UPDATE;
+  portalSaveRequested = true;
+  String success = String("Firmware installed from GitHub.\nPackage: ") + packageLabel + "\nRebooting ...";
+  portalSendJson(true, success.c_str());
+}
+
 static void handlePortalWifiList() {
   if (hasSetupPinConfigured(deviceConfig)) {
     if (isPortalUnlockExpired()) {
@@ -3302,7 +3476,16 @@ static void handlePortalReleaseInfo() {
   json += jsonEscape(releaseInfo.body.c_str());
   json += "\",\"html_url\":\"";
   json += jsonEscape(releaseInfo.htmlUrl.c_str());
-  json += "\"}";
+  String firmwareUrl;
+  String packageLabel;
+  const bool hasMatchingAsset = selectReleaseFirmwareUrl(releaseInfo, hardwareSecureBootActive, firmwareUrl, packageLabel);
+  json += "\",\"package\":\"";
+  json += jsonEscape(packageLabel.c_str());
+  json += "\",\"asset_available\":";
+  json += hasMatchingAsset ? "true" : "false";
+  json += ",\"newer\":";
+  json += isReleaseNewerThanCurrent(releaseInfo) ? "true" : "false";
+  json += "}";
 
   portalServer.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   portalServer.sendHeader("Pragma", "no-cache");
@@ -3319,6 +3502,7 @@ static void setupPortalRoutes() {
   portalServer.on("/unlock", HTTP_POST, handlePortalUnlock);
   portalServer.on("/save", HTTP_POST, handlePortalSave);
   portalServer.on("/firmware", HTTP_POST, handlePortalFirmwareUploadComplete, handlePortalFirmwareUpload);
+  portalServer.on("/firmware-online", HTTP_POST, handlePortalFirmwareOnline);
   portalServer.on("/validate", HTTP_POST, handlePortalValidate);
   portalServer.on("/release-info", HTTP_POST, handlePortalReleaseInfo);
   portalServer.on("/wifi-list", HTTP_GET, handlePortalWifiList);
@@ -3426,11 +3610,11 @@ static bool connectWiFi(const DeviceConfig& cfg, uint16_t timeout_ms, bool keepP
   return WiFi.status() == WL_CONNECTED;
 }
 
-static bool parseJsonStringField(const String& payload, const char* key, String& outValue) {
+static bool parseJsonStringFieldFrom(const String& payload, const char* key, int startIndex, String& outValue, int* nextIndex = nullptr) {
   if (!key || !key[0]) return false;
 
   const String needle = String("\"") + key + "\"";
-  const int keyIndex = payload.indexOf(needle);
+  const int keyIndex = payload.indexOf(needle, startIndex < 0 ? 0 : startIndex);
   if (keyIndex < 0) return false;
 
   int colonIndex = payload.indexOf(':', keyIndex + needle.length());
@@ -3493,12 +3677,78 @@ static bool parseJsonStringField(const String& payload, const char* key, String&
       continue;
     }
     if (c == '"') {
+      if (nextIndex) *nextIndex = i + 1;
       return true;
     }
     outValue += c;
   }
 
   return false;
+}
+
+static bool parseJsonStringField(const String& payload, const char* key, String& outValue) {
+  return parseJsonStringFieldFrom(payload, key, 0, outValue, nullptr);
+}
+
+static bool parseGitHubReleaseAssetUrl(const String& payload, const String& assetNameSuffix, String& outUrl) {
+  int searchIndex = 0;
+  while (searchIndex < payload.length()) {
+    String assetName;
+    int afterName = 0;
+    if (!parseJsonStringFieldFrom(payload, "name", searchIndex, assetName, &afterName)) {
+      return false;
+    }
+    searchIndex = afterName;
+    if (!assetName.endsWith(assetNameSuffix)) {
+      continue;
+    }
+
+    String downloadUrl;
+    if (parseJsonStringFieldFrom(payload, "browser_download_url", afterName, downloadUrl, nullptr)) {
+      downloadUrl.trim();
+      if (downloadUrl.length() > 0) {
+        outUrl = downloadUrl;
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+static uint32_t readVersionPart(const String& version, int& index) {
+  while (index < version.length() && !isdigit((unsigned char)version[index])) {
+    index++;
+  }
+
+  uint32_t value = 0;
+  while (index < version.length() && isdigit((unsigned char)version[index])) {
+    value = (value * 10U) + (uint32_t)(version[index] - '0');
+    index++;
+  }
+  return value;
+}
+
+static int compareFirmwareVersions(String left, String right) {
+  left.trim();
+  right.trim();
+  if (left.startsWith("v") || left.startsWith("V")) left.remove(0, 1);
+  if (right.startsWith("v") || right.startsWith("V")) right.remove(0, 1);
+
+  int leftIndex = 0;
+  int rightIndex = 0;
+  for (uint8_t i = 0; i < 8; i++) {
+    const uint32_t leftPart = readVersionPart(left, leftIndex);
+    const uint32_t rightPart = readVersionPart(right, rightIndex);
+    if (leftPart > rightPart) return 1;
+    if (leftPart < rightPart) return -1;
+    if (leftIndex >= left.length() && rightIndex >= right.length()) return 0;
+  }
+  return 0;
+}
+
+static bool isReleaseNewerThanCurrent(const GitHubReleaseInfo& releaseInfo) {
+  return compareFirmwareVersions(releaseInfo.tagName, FIRMWARE_VERSION) > 0;
 }
 
 static void normalizeReleaseNotesPreview(String& notes) {
@@ -3531,8 +3781,22 @@ static bool parseGitHubReleaseInfo(const String& payload, GitHubReleaseInfo& out
     outInfo.name = outInfo.tagName;
   }
 
+  String version = outInfo.tagName;
+  if (version.startsWith("v") || version.startsWith("V")) {
+    version.remove(0, 1);
+  }
+  parseGitHubReleaseAssetUrl(payload, String("FreedomClock-") + version + "-manual-update-open.bin", outInfo.openBinUrl);
+  parseGitHubReleaseAssetUrl(payload, String("FreedomClock-") + version + "-manual-update-secure.bin", outInfo.secureBinUrl);
+
   normalizeReleaseNotesPreview(outInfo.body);
   return outInfo.tagName.length() > 0;
+}
+
+static bool selectReleaseFirmwareUrl(const GitHubReleaseInfo& releaseInfo, bool securePackage, String& outUrl, String& outPackageLabel) {
+  outPackageLabel = securePackage ? "secure package" : "open package";
+  outUrl = securePackage ? releaseInfo.secureBinUrl : releaseInfo.openBinUrl;
+  outUrl.trim();
+  return outUrl.length() > 0;
 }
 
 static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* errorBuf, size_t errorBufSize) {
