@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import urllib.error
 import urllib.parse
@@ -33,6 +34,7 @@ BUILD_ROOT = WORKDIR / "arduino-build"
 DEFAULT_IDF_ROOT = WORKDIR / "esp-idf"
 DOCS_DIR = REPO_ROOT / "docs"
 RELEASE_NOTES_DIR = DOCS_DIR / "releases"
+LOCAL_GITHUB_TOKEN_PATH = Path.home() / ".freedom-clock" / "github-token"
 
 BOARD_FQBN = "Heltec-esp32:esp32:heltec_vision_master_e_213"
 ARDUINO_CLI_DEFAULT = Path(
@@ -239,9 +241,11 @@ def github_token() -> str:
         or os.environ.get("GITHUB_TOKEN")
         or os.environ.get("GH_TOKEN")
     )
+    if not token and LOCAL_GITHUB_TOKEN_PATH.exists():
+        token = LOCAL_GITHUB_TOKEN_PATH.read_text().strip()
     if not token:
         raise ToolError(
-            "GitHub token not found. Set FREEDOM_CLOCK_GITHUB_TOKEN or GITHUB_TOKEN before publishing a release."
+            "GitHub token not found. Set FREEDOM_CLOCK_GITHUB_TOKEN, GITHUB_TOKEN, GH_TOKEN, or store it at ~/.freedom-clock/github-token."
         )
     return token
 
@@ -255,6 +259,16 @@ def github_api_request(
     binary: bytes | None = None,
     content_type: str = "application/vnd.github+json",
 ) -> tuple[int, dict | list | str]:
+    if shutil.which("curl"):
+        return github_api_request_with_curl(
+            method,
+            url,
+            token=token,
+            payload=payload,
+            binary=binary,
+            content_type=content_type,
+        )
+
     if payload is not None and binary is not None:
         raise ToolError("Pass either JSON payload or binary payload, not both.")
 
@@ -309,6 +323,88 @@ def github_api_error_message(body: dict | list | str) -> str:
     if isinstance(body, list):
         return json.dumps(body)
     return str(body) if body else "Unknown GitHub API error"
+
+
+def github_api_request_with_curl(
+    method: str,
+    url: str,
+    *,
+    token: str,
+    payload: dict | list | None = None,
+    binary: bytes | None = None,
+    content_type: str = "application/vnd.github+json",
+) -> tuple[int, dict | list | str]:
+    curl_bin = shutil.which("curl")
+    if not curl_bin:
+        raise ToolError("curl was not found.")
+    if payload is not None and binary is not None:
+        raise ToolError("Pass either JSON payload or binary payload, not both.")
+
+    data: bytes | None = None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        content_type = "application/json; charset=utf-8"
+    elif binary is not None:
+        data = binary
+
+    status_marker = "__FREEDOM_CLOCK_HTTP_STATUS__:"
+    config_lines = [
+        "silent",
+        "show-error",
+        "location",
+        f'request = "{method}"',
+        f'url = "{url}"',
+        'header = "Accept: application/vnd.github+json"',
+        f'header = "Authorization: Bearer {token}"',
+        'header = "X-GitHub-Api-Version: 2022-11-28"',
+        'header = "User-Agent: FreedomClockSecurityTool/2026"',
+        f'header = "Content-Type: {content_type}"',
+        f'write-out = "\\n{status_marker}%{{http_code}}"',
+    ]
+    if data is not None:
+        config_lines.append('data-binary = "@-"')
+
+    ensure_workspace()
+    config_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="github-curl-",
+            suffix=".conf",
+            dir=WORKDIR,
+            delete=False,
+        ) as handle:
+            config_path = Path(handle.name)
+            handle.write("\n".join(config_lines) + "\n")
+        config_path.chmod(0o600)
+
+        result = subprocess.run(
+            [curl_bin, "--config", str(config_path)],
+            input=data,
+            capture_output=True,
+        )
+    finally:
+        if config_path and config_path.exists():
+            config_path.unlink()
+
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise ToolError(f"GitHub API request failed: {stderr or 'curl exited with an error'}")
+
+    raw = result.stdout
+    marker_bytes = ("\n" + status_marker).encode("utf-8")
+    if marker_bytes not in raw:
+        raise ToolError("GitHub API response did not include an HTTP status marker.")
+    body_bytes, status_bytes = raw.rsplit(marker_bytes, 1)
+    status = int(status_bytes.decode("utf-8", errors="replace").strip())
+    body_text = body_bytes.decode("utf-8", errors="replace") if body_bytes else ""
+    if not body_text:
+        return status, ""
+    try:
+        return status, json.loads(body_text)
+    except json.JSONDecodeError:
+        return status, body_text
 
 
 def detect_tools() -> dict[str, str | bool | list[str]]:

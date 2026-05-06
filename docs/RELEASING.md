@@ -42,7 +42,6 @@ docs/releases/v2026.05.05.7.md
 7. Publish the actual GitHub Release and upload the assets:
 
 ```bash
-export GITHUB_TOKEN=YOUR_TOKEN
 ./FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.7
 ```
 
@@ -57,6 +56,7 @@ That uploads:
 ## Notes
 
 - Use a token with repo contents/release write permission.
+- The tool reads a token from `FREEDOM_CLOCK_GITHUB_TOKEN`, `GITHUB_TOKEN`, `GH_TOKEN`, or `~/.freedom-clock/github-token`.
 - `publish-github-release` will update an existing release for the same tag if it already exists.
 - If a release asset with the same name already exists, the tool replaces it.
 - The setup page can only show release notes after a proper GitHub Release has been published.
