@@ -114,7 +114,7 @@ Safe to publish:
 - partition table
 - Mac provisioning tool source
 - documentation
-- final user-facing release files you intentionally put into GitHub Releases
+- final user-facing release files you intentionally put into GitHub Releases after local testing and explicit approval
 
 Do not publish:
 - anything inside `provisioning-workdir/` by default

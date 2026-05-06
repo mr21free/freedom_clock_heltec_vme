@@ -914,7 +914,6 @@ def upload_release_asset(upload_url_template: str, asset_path: Path, token: str)
 
 def publish_github_release(args: argparse.Namespace) -> None:
     ensure_workspace()
-    token = github_token()
     repo_slug = github_repo_slug()
     manual_dir = resolve_manual_update_dir(args)
     manifest = json.loads((manual_dir / "manifest.json").read_text())
@@ -927,6 +926,19 @@ def publish_github_release(args: argparse.Namespace) -> None:
     if not release_body:
         raise ToolError(f"Release notes file is empty: {notes_path}")
 
+    if not args.confirm_publish:
+        print(
+            "\nThis command publishes a public GitHub Release and uploads firmware assets.\n"
+            "Build and test the manual update package locally first. Then rerun with:\n"
+            "  --confirm-publish\n"
+        )
+        print(f"Release tag: {tag_name}")
+        print(f"Release title: {release_title}")
+        print(f"Release notes: {notes_path}")
+        print(f"Assets folder: {manual_dir}")
+        return
+
+    token = github_token()
     print_step(f"Publishing GitHub Release {tag_name} to {repo_slug}")
 
     api_base = f"https://api.github.com/repos/{repo_slug}/releases"
@@ -1568,6 +1580,7 @@ def build_parser() -> argparse.ArgumentParser:
     publish_release_parser.add_argument("--notes-file", help="Markdown file to use as the release description. Defaults to docs/releases/v<version>.md.")
     publish_release_parser.add_argument("--draft", action="store_true", help="Create or update the GitHub Release as a draft.")
     publish_release_parser.add_argument("--prerelease", action="store_true", help="Mark the GitHub Release as a prerelease.")
+    publish_release_parser.add_argument("--confirm-publish", action="store_true", help="Actually publish to GitHub. Without this flag the command only prints what would be published.")
     publish_release_parser.set_defaults(func=publish_github_release)
 
     keys_parser = subparsers.add_parser("generate-keys", help="Generate signing and flash-encryption keys.")

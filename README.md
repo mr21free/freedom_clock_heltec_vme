@@ -244,7 +244,8 @@ Typical contents:
 
 Recommended publishing model:
 - keep the source code, docs, partition table, updater UI, and Mac security tool public on GitHub
-- publish the manual update `.bin` files in GitHub Releases
+- build and test manual update `.bin` files locally first
+- publish `.bin` files in GitHub Releases only after explicit release approval
 - never publish anything from `provisioning-workdir/` except the final user-facing release files you explicitly choose to share
 - never publish device keys, signing keys, or per-device encrypted bundles
 
@@ -309,7 +310,7 @@ Later wired updates for an already locked device use the same tool:
 Notes:
 - `build-manual-update` creates user-facing `.bin` files for the setup-page `Firmware Update` flow. Publish those on GitHub Releases, not the whole gitignored workspace.
 - the setup-page release checker reads the latest published GitHub Release, not just a git tag, so publish an actual GitHub Release when you want users to see update notes there.
-- `publish-github-release` creates or updates the real GitHub Release page and uploads the firmware assets, checksums, and manifest.
+- `publish-github-release` creates or updates the real GitHub Release page and uploads the firmware assets, checksums, and manifest only when run with `--confirm-publish`.
 - `provision-production` defaults to `full` mode: flash encryption, signed bootloader + app, and final secure-download lock.
 - `dry-run-provisioning` prepares the release, keys, and encrypted bundle, then prints the exact board mutations it would perform without touching the board.
 - `provision-staging` is the safer first-hardware-trial profile: full security path, but no final secure-download lock and no digest-slot revocation.
