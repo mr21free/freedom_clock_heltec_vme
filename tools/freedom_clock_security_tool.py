@@ -1281,7 +1281,7 @@ def provision_staging(args: argparse.Namespace) -> None:
     args.mode = "full"
     args.skip_final_secure_download = True
     args.revoke_unused_digests = False
-    print_step("Using the safer staging profile")
+    print_step("Using the safer secure-test profile")
     print("This keeps secure-download finalization off and preserves spare Secure Boot digest slots.")
     provision_production(args)
 
@@ -1443,7 +1443,7 @@ def provision_production(args: argparse.Namespace) -> None:
             capture_output=False,
         )
     else:
-        print_step("Skipping final secure-download lock for staging use")
+        print_step("Skipping final secure-download lock for secure-test use")
 
     print_step("Reading back the device security summary")
     status(args)
@@ -1633,14 +1633,14 @@ def build_parser() -> argparse.ArgumentParser:
     provision_parser.add_argument("--idf-root", help="Existing ESP-IDF checkout to use for the helper bootloader build.")
     provision_parser.add_argument("--idf-ref", default="release/v5.5", help="ESP-IDF branch or tag to clone when bootstrapping.")
     provision_parser.add_argument("--bootstrap-idf", action="store_true", help="Download and install ESP-IDF automatically before building the helper bootloader.")
-    provision_parser.add_argument("--skip-final-secure-download", action="store_true", help="Leave secure-download finalization off for staging experiments.")
+    provision_parser.add_argument("--skip-final-secure-download", action="store_true", help="Leave secure-download finalization off for secure-test experiments.")
     provision_parser.add_argument("--revoke-unused-digests", action="store_true", help="Also revoke the two unused Secure Boot digest slots. Safer if you never want key rotation, less recoverable if things go wrong.")
     provision_parser.add_argument("--yes-i-understand", action="store_true", help="Skip the typed eFuse confirmation prompt.")
     provision_parser.set_defaults(func=provision_production)
 
-    staging_parser = subparsers.add_parser("provision-staging", help="Provision a safer first-trial staging board: full security path, but no final secure-download lock and no digest-slot revocation.")
+    staging_parser = subparsers.add_parser("provision-secure-test", help="Provision a safer first-trial secure test board: full security path, but no final secure-download lock and no digest-slot revocation.")
     staging_parser.add_argument("--port", required=True, help="Serial port, for example /dev/cu.usbmodemXXXX.")
-    staging_parser.add_argument("--device-id", required=True, help="Stable device label, for example fc-stage-001.")
+    staging_parser.add_argument("--device-id", required=True, help="Stable device label, for example fc-test-001.")
     staging_parser.add_argument("--release-name", help="Optional release bundle name.")
     staging_parser.add_argument("--secure-boot-bootloader", help="Optional path to a prebuilt secure-boot bootloader.bin.")
     staging_parser.add_argument("--idf-root", help="Existing ESP-IDF checkout to use for the helper bootloader build.")
@@ -1648,6 +1648,17 @@ def build_parser() -> argparse.ArgumentParser:
     staging_parser.add_argument("--bootstrap-idf", action="store_true", help="Download and install ESP-IDF automatically before building the helper bootloader.")
     staging_parser.add_argument("--yes-i-understand", action="store_true", help="Skip the typed eFuse confirmation prompt.")
     staging_parser.set_defaults(func=provision_staging)
+
+    staging_alias_parser = subparsers.add_parser("provision-staging", help="Deprecated alias for provision-secure-test.")
+    staging_alias_parser.add_argument("--port", required=True, help="Serial port, for example /dev/cu.usbmodemXXXX.")
+    staging_alias_parser.add_argument("--device-id", required=True, help="Stable device label, for example fc-test-001.")
+    staging_alias_parser.add_argument("--release-name", help="Optional release bundle name.")
+    staging_alias_parser.add_argument("--secure-boot-bootloader", help="Optional path to a prebuilt secure-boot bootloader.bin.")
+    staging_alias_parser.add_argument("--idf-root", help="Existing ESP-IDF checkout to use for the helper bootloader build.")
+    staging_alias_parser.add_argument("--idf-ref", default="release/v5.5", help="ESP-IDF branch or tag to clone when bootstrapping.")
+    staging_alias_parser.add_argument("--bootstrap-idf", action="store_true", help="Download and install ESP-IDF automatically before building the helper bootloader.")
+    staging_alias_parser.add_argument("--yes-i-understand", action="store_true", help="Skip the typed eFuse confirmation prompt.")
+    staging_alias_parser.set_defaults(func=provision_staging)
 
     update_parser = subparsers.add_parser("update-secure-device", help="Build, sign, encrypt, and flash an update onto an already provisioned device.")
     update_parser.add_argument("--port", required=True, help="Serial port, for example /dev/cu.usbmodemXXXX.")

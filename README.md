@@ -66,7 +66,8 @@ The current design is intentionally local-first:
 - Wi-Fi and MQTT credentials are stored only on the device after setup
 - `secrets.h` remains gitignored and is optional
 - only the birth year is stored, not the full date of birth
-- BTC mode expects local MQTT topics, so it can run fully on a home network
+- `BTC via MQTT` mode expects local MQTT topics, so it can run fully on a home network
+- `Static BTC + online price` mode fetches BTC/USD from CoinGecko, so it uses the public internet for price refreshes
 
 What this means in practice:
 - the repository is reasonably safe to share if `secrets.h` stays private
@@ -154,10 +155,10 @@ The setup page also includes a `Firmware Update` section:
 - that release check needs working Wi-Fi with internet access while the portal is open
 
 To reopen setup mode later:
-- hold the side button while waking the device, then release after about 3 seconds
+- hold the `21` / `GPIO21` button while waking the device, then release after about 3 seconds
 
 To clear saved settings and start fresh:
-- hold the side button while waking the device, then keep holding for about 10 seconds
+- hold the `21` / `GPIO21` button while waking the device, then keep holding for about 10 seconds
 
 The firmware still contains safe defaults in [Freedom_Clock_HeltecVME213.ino](Freedom_Clock_HeltecVME213.ino), mainly as fallbacks and portal prefill values:
 
@@ -214,15 +215,19 @@ static const char* MQTT_USER   = "YOUR_MQTT_USER";
 static const char* MQTT_PASS   = "YOUR_MQTT_PASSWORD";
 ```
 
-## Manual Firmware Updates
+## Firmware Updates
 
-The first end-user update path is intentionally simple:
-- users download a Freedom Clock `.bin` file
-- users join the device setup Wi-Fi
-- users open `http://192.168.4.1`
-- users upload the file in `Firmware Update`
+The setup page supports two user-friendly update paths:
+- direct online install from the latest GitHub Release when the device has working Wi-Fi with internet access
+- manual `.bin` upload when the user already downloaded the firmware file to a phone or laptop
 
-This keeps updates local and easy, without asking normal users to run the production security tool.
+The manual path is the privacy-friendly fallback:
+- download a Freedom Clock `.bin` file
+- join the device setup Wi-Fi
+- open `http://192.168.4.1`
+- upload the file in `Firmware Update`
+
+This keeps updates easy without asking normal users to run the security tool.
 
 Build public manual-update packages on your Mac with:
 
@@ -250,19 +255,19 @@ Recommended publishing model:
 - never publish anything from `provisioning-workdir/` except the final user-facing release files you explicitly choose to share
 - never publish device keys, signing keys, or per-device encrypted bundles
 
-Today there is no automatic online updater yet, so manual upload through the setup page is the main user-friendly path.
+The online installer is user-triggered from setup mode. It is not a background auto-update system.
 
-## Production Security
+## Secure Device Setup
 
 This repository now includes a custom [partitions.csv](partitions.csv) with an `nvs_keys` partition so the firmware can auto-enable encrypted NVS when the hardware has already been provisioned for flash encryption.
 
-For the repo-side production boundary in one place, see [docs/PRODUCTION_SECURITY.md](docs/PRODUCTION_SECURITY.md).
+For practical builder instructions, see [docs/SECURE_DEVICE_SETUP.md](docs/SECURE_DEVICE_SETUP.md).
 
 What this means:
 - on a production-hardened device, saved Wi-Fi and MQTT secrets can be protected at rest
 - on a normal Arduino-flashed dev board, the setup PIN still helps, but the board is not fully hardware-hardened
 - if you provision hardware security after the device already had plaintext settings on it, treat that as a fresh setup and re-enter the config
-- this firmware does not include automatic online OTA yet, so fully locked production devices still need a deliberate release strategy
+- the firmware supports user-triggered online install and manual upload, but fully locked production devices still need a deliberate release strategy
 
 Important limitation:
 - a normal Arduino IDE upload still does not burn the eFuses needed for flash encryption or secure boot
@@ -297,8 +302,8 @@ Typical flow:
 ./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.9
 ./tools/FreedomClockSecurityTool.command bootstrap-idf
 ./tools/FreedomClockSecurityTool.command build-secure-boot-project
-./tools/FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
-./tools/FreedomClockSecurityTool.command provision-staging --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
+./tools/FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-test-001
+./tools/FreedomClockSecurityTool.command provision-secure-test --port /dev/cu.usbmodemXXXX --device-id fc-test-001
 ./tools/FreedomClockSecurityTool.command provision-production --port /dev/cu.usbmodemXXXX --device-id fc-001
 ```
 
@@ -309,18 +314,16 @@ Later wired updates for an already locked device use the same tool:
 ```
 
 Notes:
-- `build-manual-update` creates user-facing `.bin` files for the setup-page `Firmware Update` flow. Publish those on GitHub Releases, not the whole gitignored workspace.
+- `build-manual-update` creates user-facing `.bin` files for the setup-page `Firmware Update` flow. Publish those on GitHub Releases only after explicit approval, not the whole gitignored workspace.
 - the setup-page release checker reads the latest published GitHub Release, not just a git tag, so publish an actual GitHub Release when you want users to see update notes there.
 - `publish-github-release` creates or updates the real GitHub Release page and uploads the firmware assets, checksums, and manifest only when run with `--confirm-publish`.
 - `provision-production` defaults to `full` mode: flash encryption, signed bootloader + app, and final secure-download lock.
 - `dry-run-provisioning` prepares the release, keys, and encrypted bundle, then prints the exact board mutations it would perform without touching the board.
-- `provision-staging` is the safer first-hardware-trial profile: full security path, but no final secure-download lock and no digest-slot revocation.
+- `provision-secure-test` is the safer first-hardware-trial profile: full security path, but no final secure-download lock and no digest-slot revocation.
 - `--mode flash-only` exists for controlled testing, but the intended shipping target is `full`.
 - by default the tool keeps the two spare Secure Boot digest slots unused, so you keep some room for future signing-key rotation; only use `--revoke-unused-digests` if you really want the stricter one-key-only posture.
-- the firmware now supports local manual app uploads through the setup page; use the `open` package for normal devices and the `secure` package for security-hardened devices.
-- keep the cable-based `update-secure-device` path as the manufacturer fallback while automatic online updating is still not built.
-
-For the human release workflow, see [docs/RELEASING.md](docs/RELEASING.md).
+- the firmware supports direct online install and local manual app uploads through the setup page; use the `open` package for normal devices and the `secure` package for security-hardened devices.
+- keep the cable-based `update-secure-device` path as the manufacturer fallback for locked devices.
 
 ## Testing The 3rd And 4th Screens
 

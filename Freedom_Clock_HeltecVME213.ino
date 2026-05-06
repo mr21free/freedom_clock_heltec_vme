@@ -98,7 +98,7 @@ static constexpr uint64_t MICROSECONDS_PER_MINUTE = 60ULL * 1000000ULL;
 static constexpr int PIN_EINK_POWER = 45;  // E-ink VCC enable
 static constexpr int PIN_BAT_ADC = 7;      // VBAT_Read
 static constexpr int PIN_ADC_CTRL = 46;    // ADC_Ctrl gate
-static constexpr int PIN_USER_BUTTON = 21; // Custom side button
+static constexpr int PIN_USER_BUTTON = 21; // Custom GPIO21 / 21 button
 
 // Battery ADC constants
 static constexpr float ADC_MAX = 4095.0f;
@@ -1754,7 +1754,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "@media (max-width:640px){.hero h1{font-size:25px;}}";
   html += "</style></head><body><div class=\"wrap\">";
   html += "<section class=\"hero\"><h1>Freedom Clock Setup</h1>";
-  html += "<p>Configure this device once, save locally, and it will boot straight into clock mode on future wakeups. Hold the side button while waking the device. Release after about 3 seconds to reopen setup, or keep holding for about 10 seconds to clear saved settings and start fresh.</p>";
+  html += "<p>Configure this device once, save locally, and it will boot straight into clock mode on future wakeups. Hold the 21 / GPIO21 button while waking the device. Release after about 3 seconds to reopen setup, or keep holding for about 10 seconds to clear saved settings and start fresh.</p>";
   html += "<div class=\"meta\">";
   html += String("<div class=\"pill\">Device ID: ") + htmlEscape(deviceId) + "</div>";
   html += String("<div class=\"pill\">Setup Wi-Fi: ") + htmlEscape(portalApSsid) + "</div>";
