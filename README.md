@@ -149,6 +149,8 @@ The setup page also includes a `Firmware Update` section:
 - the device writes the new app image and reboots
 - saved settings stay on the device
 - security-hardened devices should use signed update files
+- a `Check Latest Release` button can fetch the newest published GitHub Release and show its release notes directly on the setup page
+- that release check needs working Wi-Fi with internet access while the portal is open
 
 To reopen setup mode later:
 - hold the side button while waking the device, then release after about 3 seconds
@@ -224,7 +226,7 @@ This keeps updates local and easy, without asking normal users to run the produc
 Build public manual-update packages on your Mac with:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.6
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.7
 ```
 
 That creates a gitignored output folder under:
@@ -290,7 +292,7 @@ Typical flow:
 
 ```bash
 ./FreedomClockSecurityTool.command doctor
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.6
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.7
 ./FreedomClockSecurityTool.command bootstrap-idf
 ./FreedomClockSecurityTool.command build-secure-boot-project
 ./FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001
@@ -306,6 +308,7 @@ Later wired updates for an already locked device use the same tool:
 
 Notes:
 - `build-manual-update` creates user-facing `.bin` files for the setup-page `Firmware Update` flow. Publish those on GitHub Releases, not the whole gitignored workspace.
+- the setup-page release checker reads the latest published GitHub Release, not just a git tag, so publish an actual GitHub Release when you want users to see update notes there.
 - `provision-production` defaults to `full` mode: flash encryption, signed bootloader + app, and final secure-download lock.
 - `dry-run-provisioning` prepares the release, keys, and encrypted bundle, then prints the exact board mutations it would perform without touching the board.
 - `provision-staging` is the safer first-hardware-trial profile: full security path, but no final secure-download lock and no digest-slot revocation.

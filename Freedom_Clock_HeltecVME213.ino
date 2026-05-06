@@ -142,8 +142,10 @@ static constexpr char CONFIG_NAMESPACE[] = "freedomclk";
 static constexpr char HISTORY_NAMESPACE[] = "wealthhist";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.05.6";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.05.7";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme213/releases";
+static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme213/releases/latest";
+static constexpr char GITHUB_API_VERSION[] = "2022-11-28";
 static constexpr char MQTT_CLIENT_ID_PREFIX[] = "FreedomClock";
 static constexpr char AP_SSID_PREFIX[] = "Freedom_Clock_";
 static constexpr char AP_PASSWORD_PREFIX[] = "setup-";
@@ -153,6 +155,7 @@ static constexpr uint16_t SETUP_PIN_HASH_ROUNDS = 2048;
 static constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 static constexpr char NTP_SERVER_2[] = "time.nist.gov";
 static constexpr char COINGECKO_SIMPLE_PRICE_URL[] = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&precision=2";
+static constexpr size_t GITHUB_RELEASE_NOTES_PREVIEW_MAX_CHARS = 1200;
 static constexpr long NTP_GMT_OFFSET_SECONDS = 0;
 static constexpr int NTP_DAYLIGHT_OFFSET_SECONDS = 0;
 static const IPAddress CONFIG_AP_IP(192, 168, 4, 1);
@@ -265,6 +268,13 @@ struct WealthHistory {
   int64_t dailyBalanceSats[WEALTH_HISTORY_DAYS];
 };
 
+struct GitHubReleaseInfo {
+  String tagName;
+  String name;
+  String body;
+  String htmlUrl;
+};
+
 static DeviceConfig deviceConfig = {};
 static WealthHistory wealthHistory = {};
 
@@ -285,6 +295,7 @@ static void refreshPortalUnlockSession();
 static bool hasSetupPinConfigured(const DeviceConfig& cfg);
 static void handlePortalFirmwareUpload();
 static void handlePortalFirmwareUploadComplete();
+static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* errorBuf, size_t errorBufSize);
 
 // ============================================================
 // Utilities
@@ -1690,7 +1701,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   const bool hasSavedMqttPassword = hasText(cfg.mqttPass);
   const bool hasExistingSetupPin = hasSetupPinConfigured(cfg);
   const String securityMessage = hardwareSecurityMessage();
-  html.reserve(28200);
+  html.reserve(31800);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
@@ -1721,6 +1732,10 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".ok{background:#e8f7ea;color:#1d5d2d;}";
   html += ".err{background:#fdeaea;color:#8d2020;}";
   html += ".info{background:#eee7db;color:#5c5349;}";
+  html += ".releasebox{display:grid;gap:10px;margin-top:14px;padding:14px 16px;border-radius:14px;background:#f8f4ec;border:1px solid #e5dbc9;}";
+  html += ".releasebox .row{font-size:14px;color:#2f2924;}";
+  html += ".releasebox strong{color:#171717;}";
+  html += ".release-notes{font-size:13px;color:#5c5349;line-height:1.5;white-space:pre-wrap;}";
   html += ".actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}";
   html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;}";
   html += "button.secondary{background:#ded4c2;color:#211d19;}";
@@ -1859,8 +1874,19 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += " Need the newest .bin file? Open <a class=\"extlink\" href=\"";
   html += GITHUB_RELEASES_URL;
   html += "\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Releases</a>.</div>";
-  html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_upload_button\" type=\"submit\">Upload Firmware</button></div>";
+  html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_upload_button\" type=\"submit\">Upload Firmware</button><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check Latest Release</button></div>";
   html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+  html += "<div id=\"release_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+  html += "<div id=\"release_summary\" class=\"releasebox hidden\">";
+  html += String("<div class=\"row\"><strong>Current firmware:</strong> ") + FIRMWARE_VERSION + "</div>";
+  html += "<div class=\"row\"><strong>Latest published release:</strong> <span id=\"release_latest_version\">--</span></div>";
+  html += "<div class=\"row\"><strong>Release title:</strong> <span id=\"release_name\">--</span></div>";
+  html += "<div class=\"row\"><strong>Changes and improvements:</strong></div>";
+  html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
+  html += "<div class=\"row\"><a id=\"release_page_link\" class=\"extlink hidden\" href=\"";
+  html += GITHUB_RELEASES_URL;
+  html += "\" target=\"_blank\" rel=\"noopener noreferrer\">Open latest release page</a></div>";
+  html += "</div>";
   html += "</form></section>";
   html += "<script>";
   html += "(function(){";
@@ -1891,14 +1917,29 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const firmwareFileInput=document.getElementById('firmware_file');";
   html += "const firmwareUploadButton=document.getElementById('firmware_upload_button');";
   html += "const firmwareStatus=document.getElementById('firmware_status');";
+  html += "const releaseCheckButton=document.getElementById('release_check_button');";
+  html += "const releaseStatus=document.getElementById('release_status');";
+  html += "const releaseSummary=document.getElementById('release_summary');";
+  html += "const releaseLatestVersion=document.getElementById('release_latest_version');";
+  html += "const releaseName=document.getElementById('release_name');";
+  html += "const releaseNotes=document.getElementById('release_notes');";
+  html += "const releasePageLink=document.getElementById('release_page_link');";
   html += "const mqttPassInput=document.getElementById('mqtt_pass');";
   html += "const clearMqttPass=document.getElementById('clear_mqtt_pass');";
   html += "let validatedSignature='';";
   html += "function signature(){return form?new URLSearchParams(new FormData(form)).toString():'';}";
   html += "function setStatus(text,kind){if(!statusBox)return;if(!text){statusBox.style.display='none';statusBox.textContent='';statusBox.className='message info';return;}statusBox.textContent=text;statusBox.className='message '+(kind||'info');statusBox.style.display='block';}";
   html += "function setFirmwareStatus(text,kind){if(!firmwareStatus)return;if(!text){firmwareStatus.style.display='none';firmwareStatus.textContent='';firmwareStatus.className='message info';return;}firmwareStatus.textContent=text;firmwareStatus.className='message '+(kind||'info');firmwareStatus.style.display='block';}";
+  html += "function setReleaseStatus(text,kind){if(!releaseStatus)return;if(!text){releaseStatus.style.display='none';releaseStatus.textContent='';releaseStatus.className='message info';return;}releaseStatus.textContent=text;releaseStatus.className='message '+(kind||'info');releaseStatus.style.display='block';}";
   html += "function invalidate(msg){validatedSignature='';if(saveButton)saveButton.disabled=true;if(msg)setStatus(msg,'info');}";
   html += "function syncOwnerUppercase(){if(ownerInput)ownerInput.value=(ownerInput.value||'').toUpperCase();}";
+  html += "function normalizeVersion(text){return String(text||'').trim().replace(/^v/i,'');}";
+  html += "function hideReleaseSummary(){if(releaseSummary)releaseSummary.classList.add('hidden');if(releasePageLink)releasePageLink.classList.add('hidden');}";
+  html += "function renderReleaseInfo(data){const latestTag=String((data&&data.tag)||'').trim();const latestTitle=String((data&&data.name)||latestTag||'Unnamed release').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseName)releaseName.textContent=latestTitle;if(releaseNotes)releaseNotes.textContent=notes;if(releasePageLink){if(data&&data.html_url){releasePageLink.href=String(data.html_url);releasePageLink.classList.remove('hidden');}else{releasePageLink.href='";
+  html += GITHUB_RELEASES_URL;
+  html += "';releasePageLink.classList.add('hidden');}}if(releaseSummary)releaseSummary.classList.remove('hidden');const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
+  html += FIRMWARE_VERSION;
+  html += "');setReleaseStatus(latestNormalized&&latestNormalized===currentNormalized?'This device already matches the latest published release.':'Latest published release loaded.','ok');}";
   html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
   html += "function updateRefreshControls(){if(!refreshValueInput)return;const settings=refreshSettingsForUnit();refreshValueInput.min=String(settings.min);refreshValueInput.max=String(settings.max);refreshValueInput.step='1';let value=parseInt(refreshValueInput.value||'',10);if(!Number.isFinite(value))value=settings.min;if(value<settings.min)value=settings.min;if(value>settings.max)value=settings.max;refreshValueInput.value=String(value);if(refreshHint)refreshHint.textContent=settings.hint;}";
   html += "function update(){";
@@ -1946,6 +1987,18 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "}catch(err){setStatus('Validation request failed. Keep this phone connected to the device Wi-Fi and try again.','err');}";
   html += "finally{if(validateButton)validateButton.disabled=false;if(scanButton)scanButton.disabled=false;}";
   html += "}";
+  html += "async function checkLatestRelease(){";
+  html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
+  html += "hideReleaseSummary();";
+  html += "setReleaseStatus('Checking GitHub for the latest published release. This can take a few seconds...','info');";
+  html += "try{";
+  html += "const response=await fetch('/release-info',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
+  html += "const data=await response.json();";
+  html += "if(!data.ok){setReleaseStatus(data.message||'Could not load release info.','err');return;}";
+  html += "renderReleaseInfo(data);";
+  html += "}catch(err){setReleaseStatus('Release check failed. Keep this phone connected and make sure the device can reach the internet over Wi-Fi.','err');}";
+  html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
+  html += "}";
   html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;invalidate('Test the current settings before saving.');}";
   html += "if(asset) asset.addEventListener('change', update);";
   html += "if(mode) mode.addEventListener('change', update);";
@@ -1958,6 +2011,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', function(event){if(!validatedSignature||(saveButton&&saveButton.disabled)){event.preventDefault();setStatus('Please test the current settings before saving.','err');}});}";
   html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){if(firmwareUploadButton)firmwareUploadButton.disabled=false;setFirmwareStatus('', 'info');});";
   html += "if(firmwareForm){firmwareForm.addEventListener('submit', function(event){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){event.preventDefault();setFirmwareStatus('Choose a firmware .bin file first.','err');return;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){event.preventDefault();setFirmwareStatus('Firmware file must end with .bin.','err');return;}if(firmwareUploadButton)firmwareUploadButton.disabled=true;setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');});}";
+  html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
   html += "if(scanButton) scanButton.addEventListener('click', refreshWifiList);";
   html += "if(validateButton) validateButton.addEventListener('click', validateCurrentSettings);";
   html += "syncOwnerUppercase();";
@@ -3197,6 +3251,55 @@ static void handlePortalValidate() {
   portalSendJson(true, successMessage.c_str());
 }
 
+static void handlePortalReleaseInfo() {
+  if (hasSetupPinConfigured(deviceConfig)) {
+    if (isPortalUnlockExpired()) {
+      portalUnlocked = false;
+      portalUnlockedAtMs = 0;
+    }
+    if (!portalUnlocked) {
+      portalSendJson(false, "Unlock setup first.");
+      return;
+    }
+    refreshPortalUnlockSession();
+  }
+
+  DeviceConfig submitted = deviceConfig;
+  loadSubmittedPortalConfig(submitted);
+
+  if (!hasText(submitted.wifiSsid)) {
+    portalSendJson(false, "Wi-Fi required\nAdd working Wi-Fi first to check GitHub releases.");
+    return;
+  }
+
+  if (!connectWiFi(submitted, WIFI_CONNECT_TIMEOUT_MS, true)) {
+    portalSendJson(false, "Wi-Fi failed\nCheck the SSID and password, then try again.");
+    return;
+  }
+
+  GitHubReleaseInfo releaseInfo;
+  char fetchError[128];
+  if (!fetchLatestGitHubReleaseInfo(releaseInfo, fetchError, sizeof(fetchError))) {
+    String error = String("Wi-Fi OK\nRELEASE CHECK failed\n") + fetchError;
+    portalSendJson(false, error.c_str());
+    return;
+  }
+
+  String json = "{\"ok\":true,\"message\":\"Latest release loaded.\",\"tag\":\"";
+  json += jsonEscape(releaseInfo.tagName.c_str());
+  json += "\",\"name\":\"";
+  json += jsonEscape(releaseInfo.name.c_str());
+  json += "\",\"body\":\"";
+  json += jsonEscape(releaseInfo.body.c_str());
+  json += "\",\"html_url\":\"";
+  json += jsonEscape(releaseInfo.htmlUrl.c_str());
+  json += "\"}";
+
+  portalServer.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  portalServer.sendHeader("Pragma", "no-cache");
+  portalServer.send(200, "application/json; charset=utf-8", json);
+}
+
 static void handlePortalRedirect() {
   portalServer.sendHeader("Location", String("http://") + CONFIG_AP_IP.toString() + "/", true);
   portalServer.send(302, "text/plain", "");
@@ -3208,6 +3311,7 @@ static void setupPortalRoutes() {
   portalServer.on("/save", HTTP_POST, handlePortalSave);
   portalServer.on("/firmware", HTTP_POST, handlePortalFirmwareUploadComplete, handlePortalFirmwareUpload);
   portalServer.on("/validate", HTTP_POST, handlePortalValidate);
+  portalServer.on("/release-info", HTTP_POST, handlePortalReleaseInfo);
   portalServer.on("/wifi-list", HTTP_GET, handlePortalWifiList);
   portalServer.on("/generate_204", HTTP_GET, handlePortalRedirect);
   portalServer.on("/redirect", HTTP_GET, handlePortalRedirect);
@@ -3311,6 +3415,160 @@ static bool connectWiFi(const DeviceConfig& cfg, uint16_t timeout_ms, bool keepP
     delay(WIFI_POLL_DELAY_MS);
   }
   return WiFi.status() == WL_CONNECTED;
+}
+
+static bool parseJsonStringField(const String& payload, const char* key, String& outValue) {
+  if (!key || !key[0]) return false;
+
+  const String needle = String("\"") + key + "\"";
+  const int keyIndex = payload.indexOf(needle);
+  if (keyIndex < 0) return false;
+
+  int colonIndex = payload.indexOf(':', keyIndex + needle.length());
+  if (colonIndex < 0) return false;
+  colonIndex++;
+
+  while (colonIndex < payload.length() && isspace((unsigned char)payload[colonIndex])) {
+    colonIndex++;
+  }
+  if (colonIndex >= payload.length() || payload[colonIndex] != '"') return false;
+
+  outValue = "";
+  bool escaped = false;
+  for (int i = colonIndex + 1; i < payload.length(); i++) {
+    const char c = payload[i];
+    if (escaped) {
+      switch (c) {
+        case 'n':
+          outValue += '\n';
+          break;
+        case 'r':
+          outValue += '\r';
+          break;
+        case 't':
+          outValue += '\t';
+          break;
+        case '"':
+        case '\\':
+        case '/':
+          outValue += c;
+          break;
+        case 'u':
+          if ((i + 4) < payload.length()) {
+            char hexBuf[5] = {0};
+            for (int j = 0; j < 4; j++) {
+              hexBuf[j] = payload[i + 1 + j];
+            }
+            char* endPtr = nullptr;
+            unsigned long codePoint = strtoul(hexBuf, &endPtr, 16);
+            if (endPtr == (hexBuf + 4) && codePoint <= 0x7F && isprint((int)codePoint)) {
+              outValue += (char)codePoint;
+            } else {
+              outValue += '?';
+            }
+            i += 4;
+          } else {
+            outValue += '?';
+          }
+          break;
+        default:
+          outValue += c;
+          break;
+      }
+      escaped = false;
+      continue;
+    }
+
+    if (c == '\\') {
+      escaped = true;
+      continue;
+    }
+    if (c == '"') {
+      return true;
+    }
+    outValue += c;
+  }
+
+  return false;
+}
+
+static void normalizeReleaseNotesPreview(String& notes) {
+  notes.replace("\r\n", "\n");
+  notes.replace('\r', '\n');
+  while (notes.indexOf("\n\n\n") >= 0) {
+    notes.replace("\n\n\n", "\n\n");
+  }
+  notes.trim();
+  if (notes.length() > (int)GITHUB_RELEASE_NOTES_PREVIEW_MAX_CHARS) {
+    notes.remove(GITHUB_RELEASE_NOTES_PREVIEW_MAX_CHARS);
+    notes += "\n\n...";
+  }
+  if (!notes.length()) {
+    notes = "No release notes provided.";
+  }
+}
+
+static bool parseGitHubReleaseInfo(const String& payload, GitHubReleaseInfo& outInfo) {
+  if (!parseJsonStringField(payload, "tag_name", outInfo.tagName)) return false;
+  parseJsonStringField(payload, "name", outInfo.name);
+  parseJsonStringField(payload, "body", outInfo.body);
+  parseJsonStringField(payload, "html_url", outInfo.htmlUrl);
+
+  outInfo.tagName.trim();
+  outInfo.name.trim();
+  outInfo.htmlUrl.trim();
+
+  if (!outInfo.name.length()) {
+    outInfo.name = outInfo.tagName;
+  }
+
+  normalizeReleaseNotesPreview(outInfo.body);
+  return outInfo.tagName.length() > 0;
+}
+
+static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* errorBuf, size_t errorBufSize) {
+  if (WiFi.status() != WL_CONNECTED) {
+    snprintf(errorBuf, errorBufSize, "Wi-Fi is not connected.");
+    return false;
+  }
+
+  WiFiClientSecure secureClient;
+  secureClient.setInsecure();
+
+  HTTPClient http;
+  http.setTimeout(PRICE_HTTP_TIMEOUT_MS);
+  if (!http.begin(secureClient, GITHUB_LATEST_RELEASE_API_URL)) {
+    snprintf(errorBuf, errorBufSize, "Could not start GitHub release request.");
+    return false;
+  }
+
+  http.addHeader("Accept", "application/vnd.github+json");
+  http.addHeader("User-Agent", "FreedomClock/2026");
+  http.addHeader("X-GitHub-Api-Version", GITHUB_API_VERSION);
+
+  const int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_OK) {
+    if (httpCode == HTTP_CODE_NOT_FOUND) {
+      snprintf(errorBuf, errorBufSize, "No published GitHub release found yet.");
+    } else if (httpCode == HTTP_CODE_FORBIDDEN || httpCode == 429) {
+      snprintf(errorBuf, errorBufSize, "GitHub API rate limited. Try again later.");
+    } else {
+      snprintf(errorBuf, errorBufSize, "GitHub release request failed (%d).", httpCode);
+    }
+    http.end();
+    return false;
+  }
+
+  const String payload = http.getString();
+  http.end();
+
+  if (!parseGitHubReleaseInfo(payload, outInfo)) {
+    snprintf(errorBuf, errorBufSize, "GitHub release response could not be parsed.");
+    return false;
+  }
+
+  errorBuf[0] = '\0';
+  return true;
 }
 
 static bool parseCoinGeckoUsdPrice(const String& payload, float& outPriceUsd) {
