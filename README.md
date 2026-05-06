@@ -157,6 +157,12 @@ The setup page also includes a `Firmware Update` section:
 - when the published release is newer, `Update Firmware` can download the matching `open` or `secure` package directly from GitHub and apply it
 - that release check needs working Wi-Fi with internet access while the portal is open
 
+The setup page also shows device storage usage for the NVS / `Preferences` partition:
+- `Config`: saved setup values and credentials
+- `History`: the daily wealth and freedom-change data
+- `Other`: system/NVS overhead and other namespaces
+- `Free`: remaining NVS entries available for future saved data
+
 To reopen setup mode later:
 - hold the `21` / `GPIO21` button while waking the device, then release after about 3 seconds
 

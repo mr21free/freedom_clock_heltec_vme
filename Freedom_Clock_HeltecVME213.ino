@@ -13,6 +13,7 @@
 #include "esp_flash_encrypt.h"
 #include "esp_secure_boot.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "driver/rtc_io.h"
 #include <cctype>
 #include <cstdint>
@@ -229,6 +230,18 @@ struct LifeStats {
   int totalWeeks;
   int remainingWeeks;
   int remainingPercent;
+};
+
+struct DeviceStorageStats {
+  bool available;
+  size_t partitionBytes;
+  size_t totalEntries;
+  size_t usedEntries;
+  size_t freeEntries;
+  size_t namespaceCount;
+  size_t configEntries;
+  size_t historyEntries;
+  size_t otherEntries;
 };
 
 struct DisplayThemeColors {
@@ -467,6 +480,15 @@ static void formatSignedBtcDelta(int64_t deltaSats, char* dst, size_t dstSize) {
   snprintf(dst, dstSize, "%+.4f", btc);
 }
 
+static void formatStorageBytes(size_t bytes, char* dst, size_t dstSize) {
+  if (!dst || dstSize == 0) return;
+  if (bytes >= (1024U * 1024U)) {
+    snprintf(dst, dstSize, "%.2f MB", (double)bytes / (1024.0 * 1024.0));
+  } else {
+    snprintf(dst, dstSize, "%.1f KB", (double)bytes / 1024.0);
+  }
+}
+
 static void formatTrimmedBtcAmount(float btcValue, char* dst, size_t dstSize) {
   if (!dst || dstSize == 0) return;
   if (!(btcValue >= 0.0f)) {
@@ -482,6 +504,54 @@ static void formatTrimmedBtcAmount(float btcValue, char* dst, size_t dstSize) {
   if (len > 0 && dst[len - 1] == '.') {
     dst[len - 1] = '\0';
   }
+}
+
+static bool countNvsNamespaceEntries(const char* namespaceName, size_t& outEntries) {
+  outEntries = 0;
+  if (!namespaceName || namespaceName[0] == '\0') return false;
+
+  nvs_handle_t handle = 0;
+  esp_err_t err = nvs_open(namespaceName, NVS_READONLY, &handle);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    return true;
+  }
+  if (err != ESP_OK) {
+    return false;
+  }
+
+  err = nvs_get_used_entry_count(handle, &outEntries);
+  nvs_close(handle);
+  return err == ESP_OK;
+}
+
+static DeviceStorageStats readDeviceStorageStats() {
+  DeviceStorageStats out = {};
+  const esp_partition_t* nvsPartition = esp_partition_find_first(
+    ESP_PARTITION_TYPE_DATA,
+    ESP_PARTITION_SUBTYPE_DATA_NVS,
+    nullptr
+  );
+  if (nvsPartition) {
+    out.partitionBytes = nvsPartition->size;
+  }
+
+  nvs_stats_t nvsStats = {};
+  if (nvs_get_stats(nullptr, &nvsStats) != ESP_OK) {
+    return out;
+  }
+
+  out.available = true;
+  out.totalEntries = nvsStats.total_entries;
+  out.usedEntries = nvsStats.used_entries;
+  out.freeEntries = nvsStats.free_entries;
+  out.namespaceCount = nvsStats.namespace_count;
+
+  countNvsNamespaceEntries(CONFIG_NAMESPACE, out.configEntries);
+  countNvsNamespaceEntries(HISTORY_NAMESPACE, out.historyEntries);
+
+  const size_t knownEntries = out.configEntries + out.historyEntries;
+  out.otherEntries = (out.usedEntries > knownEntries) ? (out.usedEntries - knownEntries) : 0;
+  return out;
 }
 
 static void clearWealthHistoryInMemory(WealthHistory& history) {
@@ -1712,7 +1782,10 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   float previewBalanceBtc = 0.0f;
   const bool previewHasPriceUsd = parseNonNegativeFloatStrict(previewPriceText, previewPriceUsd, false);
   const bool previewHasBalanceBtc = parseNonNegativeFloatStrict(previewBalanceText, previewBalanceBtc, true);
-  html.reserve(37200);
+  const DeviceStorageStats storageStats = readDeviceStorageStats();
+  char nvsPartitionSize[20];
+  formatStorageBytes(storageStats.partitionBytes, nvsPartitionSize, sizeof(nvsPartitionSize));
+  html.reserve(40200);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
@@ -1747,6 +1820,16 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".preview-card h2{color:#fff7ec;}";
   html += ".preview-value{font-size:34px;font-weight:800;letter-spacing:.03em;line-height:1.05;}";
   html += ".preview-hint{font-size:13px;color:#f7d9ad;line-height:1.45;margin-top:10px;}";
+  html += ".storage-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px;font-size:14px;}";
+  html += ".storage-head strong{font-weight:800;}";
+  html += ".storage-bar{display:flex;height:22px;overflow:hidden;border-radius:5px;background:#ded4c2;margin:8px 0 10px;}";
+  html += ".storage-segment{display:block;min-width:1px;height:100%;}";
+  html += ".storage-config{background:#ff4b3e;}";
+  html += ".storage-history{background:#f7931a;}";
+  html += ".storage-other{background:#9b958d;}";
+  html += ".storage-free{background:#eadfcd;}";
+  html += ".storage-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:#645c53;}";
+  html += ".dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;}";
   html += ".releasebox{display:grid;gap:10px;margin-top:14px;padding:14px 16px;border-radius:14px;background:#f8f4ec;border:1px solid #e5dbc9;}";
   html += ".releasebox .row{font-size:14px;color:#2f2924;}";
   html += ".releasebox strong{color:#171717;}";
@@ -1815,6 +1898,51 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<section class=\"card preview-card\"><h2>Freedom Time Preview</h2>";
   html += "<div id=\"freedom_preview_value\" class=\"preview-value\">--</div>";
   html += "<div id=\"freedom_preview_hint\" class=\"preview-hint\">Change the values above to preview the result before saving.</div>";
+  html += "</section>";
+
+  html += "<section class=\"card\"><h2>Device Storage</h2>";
+  if (storageStats.available && storageStats.totalEntries > 0) {
+    const float totalEntries = (float)storageStats.totalEntries;
+    const float configPct = ((float)storageStats.configEntries / totalEntries) * 100.0f;
+    const float historyPct = ((float)storageStats.historyEntries / totalEntries) * 100.0f;
+    const float otherPct = ((float)storageStats.otherEntries / totalEntries) * 100.0f;
+    const float freePct = ((float)storageStats.freeEntries / totalEntries) * 100.0f;
+    html += "<div class=\"storage-head\"><span>NVS / Preferences</span><strong>";
+    html += String(storageStats.usedEntries);
+    html += " of ";
+    html += String(storageStats.totalEntries);
+    html += " entries used</strong></div>";
+    html += "<div class=\"storage-bar\" aria-label=\"Device storage usage\">";
+    html += "<span class=\"storage-segment storage-config\" style=\"width:";
+    html += String(configPct, 2);
+    html += "%\"></span>";
+    html += "<span class=\"storage-segment storage-history\" style=\"width:";
+    html += String(historyPct, 2);
+    html += "%\"></span>";
+    html += "<span class=\"storage-segment storage-other\" style=\"width:";
+    html += String(otherPct, 2);
+    html += "%\"></span>";
+    html += "<span class=\"storage-segment storage-free\" style=\"width:";
+    html += String(freePct, 2);
+    html += "%\"></span></div>";
+    html += "<div class=\"storage-legend\">";
+    html += "<span><i class=\"dot storage-config\"></i>Config ";
+    html += String(storageStats.configEntries);
+    html += "</span><span><i class=\"dot storage-history\"></i>History ";
+    html += String(storageStats.historyEntries);
+    html += "</span><span><i class=\"dot storage-other\"></i>Other ";
+    html += String(storageStats.otherEntries);
+    html += "</span><span><i class=\"dot storage-free\"></i>Free ";
+    html += String(storageStats.freeEntries);
+    html += "</span></div>";
+    html += "<div class=\"hint\">Daily stats are stored in the History segment. Current history capacity is ";
+    html += String(WEALTH_HISTORY_DAYS);
+    html += " daily records. NVS partition size: ";
+    html += nvsPartitionSize;
+    html += ".</div>";
+  } else {
+    html += "<div class=\"message info\">Storage usage is not available right now.</div>";
+  }
   html += "</section>";
 
   html += "<section class=\"card\"><h2>Display</h2><div class=\"grid\">";
