@@ -1909,7 +1909,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<div class=\"row\"><strong>Changes and improvements:</strong></div>";
   html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
   html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>Latest release URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
-  html += "<div class=\"actions\"><button id=\"online_update_button\" type=\"button\" disabled>Install Latest Firmware</button></div>";
+  html += "<div class=\"actions\"><button id=\"online_update_button\" type=\"button\" disabled>Update Firmware</button></div>";
   html += "</div>";
   html += "</form></section>";
   html += "<script>";
@@ -2054,16 +2054,16 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
   html += "}";
   html += "async function installLatestFirmware(){";
-  html += "if(!window.confirm('Install the latest Freedom Clock firmware now? Keep this phone connected until the device restarts.'))return;";
+  html += "if(!window.confirm('Update to the latest Freedom Clock firmware now? Keep this phone connected until the device restarts.'))return;";
   html += "if(onlineUpdateButton)onlineUpdateButton.disabled=true;";
   html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
   html += "setReleaseStatus('Downloading and installing firmware. Keep this phone connected. The device will reboot when finished.','info');";
   html += "try{";
   html += "const response=await fetch('/firmware-online',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
   html += "const data=await response.json();";
-  html += "if(!data.ok){setReleaseStatus(data.message||'Firmware install failed.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;return;}";
-  html += "setReleaseStatus(data.message||'Firmware installed. Rebooting ...','ok');";
-  html += "}catch(err){setReleaseStatus('Firmware install request failed. Use manual upload if the device does not restart.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;}";
+  html += "if(!data.ok){setReleaseStatus(data.message||'Firmware update failed.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;return;}";
+  html += "setReleaseStatus(data.message||'Firmware updated. Rebooting ...','ok');";
+  html += "}catch(err){setReleaseStatus('Firmware update request failed. Use manual upload if the device does not restart.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;}";
   html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
   html += "}";
   html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();invalidate('Test the current settings before saving.');}";
@@ -3278,7 +3278,7 @@ static void handlePortalFirmwareOnline() {
   checkpointPortalUnixTime();
   portalExitAction = PORTAL_EXIT_ACTION_FIRMWARE_UPDATE;
   portalSaveRequested = true;
-  String success = String("Firmware installed from GitHub.\nPackage: ") + packageLabel + "\nRebooting ...";
+  String success = String("Firmware updated from GitHub.\nPackage: ") + packageLabel + "\nRebooting ...";
   portalSendJson(true, success.c_str());
 }
 

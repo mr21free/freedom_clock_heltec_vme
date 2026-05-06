@@ -127,7 +127,7 @@ The tool asks for typed confirmation before it burns irreversible eFuses unless 
 ## Updating Locked Devices
 
 Normal users should update through the setup page:
-- direct `Install Latest Firmware` if the device has working Wi-Fi with internet access
+- direct `Update Firmware` if the device has working Wi-Fi with internet access
 - manual `.bin` upload if the phone/laptop already downloaded the firmware file
 
 For a manufacturer fallback over USB:

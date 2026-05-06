@@ -154,7 +154,7 @@ The setup page also includes a `Firmware Update` section:
 - saved settings stay on the device
 - security-hardened devices should use signed update files
 - a `Check Latest Release` button can fetch the newest published GitHub Release and show its release notes directly on the setup page
-- when the published release is newer, `Install Latest Firmware` can download the matching `open` or `secure` package directly from GitHub and apply it
+- when the published release is newer, `Update Firmware` can download the matching `open` or `secure` package directly from GitHub and apply it
 - that release check needs working Wi-Fi with internet access while the portal is open
 
 To reopen setup mode later:
@@ -221,7 +221,7 @@ static const char* MQTT_PASS   = "YOUR_MQTT_PASSWORD";
 ## Firmware Updates
 
 The setup page supports two user-friendly update paths:
-- direct online install from the latest GitHub Release when the device has working Wi-Fi with internet access
+- direct online update from the latest GitHub Release when the device has working Wi-Fi with internet access
 - manual `.bin` upload when the user already downloaded the firmware file to a phone or laptop
 
 The manual path is the privacy-friendly fallback:
@@ -258,7 +258,7 @@ Recommended publishing model:
 - never publish anything from `provisioning-workdir/` except the final user-facing release files you explicitly choose to share
 - never publish device keys, signing keys, or per-device encrypted bundles
 
-The online installer is user-triggered from setup mode. It is not a background auto-update system.
+The online updater is user-triggered from setup mode. It is not a background auto-update system.
 
 ## Secure Device Setup
 
@@ -270,7 +270,7 @@ What this means:
 - on a production-hardened device, saved Wi-Fi and MQTT secrets can be protected at rest
 - on a normal Arduino-flashed dev board, the setup PIN still helps, but the board is not fully hardware-hardened
 - if you provision hardware security after the device already had plaintext settings on it, treat that as a fresh setup and re-enter the config
-- the firmware supports user-triggered online install and manual upload, but fully locked production devices still need a deliberate release strategy
+- the firmware supports user-triggered online update and manual upload, but fully locked production devices still need a deliberate release strategy
 
 Important limitation:
 - a normal Arduino IDE upload still does not burn the eFuses needed for flash encryption or secure boot
@@ -325,7 +325,7 @@ Notes:
 - `provision-secure-test` is the safer first-hardware-trial profile: full security path, but no final secure-download lock and no digest-slot revocation.
 - `--mode flash-only` exists for controlled testing, but the intended shipping target is `full`.
 - by default the tool keeps the two spare Secure Boot digest slots unused, so you keep some room for future signing-key rotation; only use `--revoke-unused-digests` if you really want the stricter one-key-only posture.
-- the firmware supports direct online install and local manual app uploads through the setup page; use the `open` package for normal devices and the `secure` package for security-hardened devices.
+- the firmware supports direct online update and local manual app uploads through the setup page; use the `open` package for normal devices and the `secure` package for security-hardened devices.
 - keep the cable-based `update-secure-device` path as the manufacturer fallback for locked devices.
 
 ## Testing The 3rd And 4th Screens
