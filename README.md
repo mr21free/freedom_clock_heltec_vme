@@ -2,11 +2,11 @@
 
 Freedom Clock is a low-power e-ink device for the Heltec Vision Master E213 that turns savings into time.
 
-It shows:
-- expected freedom time
-- expected lifetime left
-- freedom coverage
-- a second details screen with portfolio and life settings
+It has four e-ink screens:
+- screen 1: expected freedom time, expected lifetime left, and freedom coverage
+- screen 2: input parameters plus firmware version
+- screen 3: current wealth and period change stats
+- screen 4: freedom change across key lookback periods
 
 The project supports both:
 - `BTC` mode: wealth is derived from BTC amount and BTC/USD price
@@ -36,7 +36,7 @@ It also supports two display themes:
 
 ## What The Device Shows
 
-Main screen:
+Screen 1:
 - owner-specific freedom title
 - freedom time in `Y / M / W`
 - expected lifetime left in `Y / M / W`
@@ -44,16 +44,20 @@ Main screen:
 - device battery percent
 - selected light or dark theme
 
-Second screen:
-- shown by pressing the custom `GPIO21` side button
+Screen 2:
+- shown by a single press of the custom `GPIO21` button
 - can also wake the device from deep sleep
-- shows asset type, BTC or net worth details, growth, inflation, monthly spending, age now, life expectancy, and withdrawal mode
+- shows asset type, BTC or net worth details, growth, inflation, monthly spending, age now, life expectancy, withdrawal mode, and firmware version
 
-Third screen:
-- opened by a quick second press of `GPIO21` during the wake window
+Screen 3:
+- opened by a quick double press of `GPIO21` during the wake window
 - shows current wealth in USD
 - shows wealth change across `7D`, `1M`, `3M`, `6M`, and `12M`
 - in `BTC` mode it also shows BTC amount change and BTC price change
+
+Screen 4:
+- opened by a quick triple press of `GPIO21` during the wake window
+- shows freedom change across `7D`, `1M`, `3M`, `6M`, and `12M`
 
 ## Privacy And OPSEC
 
@@ -220,7 +224,7 @@ This keeps updates local and easy, without asking normal users to run the produc
 Build public manual-update packages on your Mac with:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.5
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.6
 ```
 
 That creates a gitignored output folder under:
@@ -286,7 +290,7 @@ Typical flow:
 
 ```bash
 ./FreedomClockSecurityTool.command doctor
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.5
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.6
 ./FreedomClockSecurityTool.command bootstrap-idf
 ./FreedomClockSecurityTool.command build-secure-boot-project
 ./FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001

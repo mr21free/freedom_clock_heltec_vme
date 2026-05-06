@@ -142,7 +142,8 @@ static constexpr char CONFIG_NAMESPACE[] = "freedomclk";
 static constexpr char HISTORY_NAMESPACE[] = "wealthhist";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.05.5";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.05.6";
+static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme213/releases";
 static constexpr char MQTT_CLIENT_ID_PREFIX[] = "FreedomClock";
 static constexpr char AP_SSID_PREFIX[] = "Freedom_Clock_";
 static constexpr char AP_PASSWORD_PREFIX[] = "setup-";
@@ -1689,7 +1690,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   const bool hasSavedMqttPassword = hasText(cfg.mqttPass);
   const bool hasExistingSetupPin = hasSetupPinConfigured(cfg);
   const String securityMessage = hardwareSecurityMessage();
-  html.reserve(27000);
+  html.reserve(28200);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
@@ -1724,6 +1725,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;}";
   html += "button.secondary{background:#ded4c2;color:#211d19;}";
   html += "button[disabled]{opacity:.45;cursor:not-allowed;}";
+  html += "a.extlink{color:#8b4f00;font-weight:700;text-decoration:none;}";
+  html += "a.extlink:hover,a.extlink:focus{text-decoration:underline;}";
   html += ".subtle{font-size:13px;color:#645c53;}";
   html += "@media (max-width:640px){.hero h1{font-size:25px;}}";
   html += "</style></head><body><div class=\"wrap\">";
@@ -1840,7 +1843,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<div class=\"hint\">Save stays locked until the current form passes validation. In static net worth mode, Wi-Fi is optional. In BTC via MQTT mode, validation checks Wi-Fi, MQTT login, both topics, and whether both payloads are valid numbers. In static BTC mode, validation checks Wi-Fi, your static BTC amount, and a live BTC/USD price fetch from CoinGecko. Switching between asset modes resets historical stats on save.</div>";
   html += "</section>";
   html += "</form>";
-  html += "<section class=\"card\"><h2>Firmware Update</h2>";
+  html += "<section class=\"card\" style=\"margin-top:16px;\"><h2>Firmware Update</h2>";
   html += "<form id=\"firmware_form\" method=\"post\" action=\"/firmware\" enctype=\"multipart/form-data\">";
   html += "<div class=\"grid\">";
   html += "<div><label for=\"firmware_file\">Firmware .bin file</label><input id=\"firmware_file\" name=\"firmware_file\" type=\"file\" accept=\".bin,application/octet-stream\"></div>";
@@ -1849,7 +1852,13 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += hardwareSecureBootActive
     ? "Use signed Freedom Clock firmware files for production-hardened devices."
     : "This works well for manual local updates during development and for future public release packages.";
-  html += "</div>";
+  html += " ";
+  html += hardwareSecureBootActive
+    ? "For this device, choose the secure package."
+    : "For this device, choose the open package.";
+  html += " Need the newest .bin file? Open <a class=\"extlink\" href=\"";
+  html += GITHUB_RELEASES_URL;
+  html += "\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Releases</a>.</div>";
   html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_upload_button\" type=\"submit\">Upload Firmware</button></div>";
   html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
   html += "</form></section>";
@@ -2333,13 +2342,8 @@ static void drawInfoScreen(
   display.print(value);
 
   display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 7));
-  display.print("DISPLAY MODE:");
-  display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 7));
-  display.print(themeModeLabel(themeMode));
-
-  display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 8));
   display.print("WITHDRAWAL MODE:");
-  display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 8));
+  display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 7));
   if (portfolioUseMode == PORTFOLIO_USE_MODE_BORROW) {
     snprintf(value, sizeof(value), "BORROW YEARLY (%.1f%%/Y)", cfg.borrowFeeAnnual * 100.0f);
   } else {
@@ -2347,9 +2351,9 @@ static void drawInfoScreen(
   }
   display.print(value);
 
-  display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 9));
+  display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 8));
   display.print("FIRMWARE:");
-  display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 9));
+  display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 8));
   display.print(FIRMWARE_VERSION);
 
   display.update();
