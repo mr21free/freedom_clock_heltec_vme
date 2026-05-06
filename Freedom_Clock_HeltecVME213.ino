@@ -144,7 +144,7 @@ static constexpr char CONFIG_NAMESPACE[] = "freedomclk";
 static constexpr char HISTORY_NAMESPACE[] = "wealthhist";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.05.9";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.06.1";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme213/releases";
 static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme213/releases/latest";
 static constexpr char GITHUB_API_VERSION[] = "2022-11-28";
@@ -1706,7 +1706,13 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   const bool hasSavedMqttPassword = hasText(cfg.mqttPass);
   const bool hasExistingSetupPin = hasSetupPinConfigured(cfg);
   const String securityMessage = hardwareSecurityMessage();
-  html.reserve(31800);
+  const char* previewPriceText = (gotPrice && hasText(priceUsdBuf)) ? priceUsdBuf : lastPriceUsd;
+  const char* previewBalanceText = (gotBalance && hasText(balanceBtcBuf)) ? balanceBtcBuf : lastBalanceBtc;
+  float previewPriceUsd = 0.0f;
+  float previewBalanceBtc = 0.0f;
+  const bool previewHasPriceUsd = parseNonNegativeFloatStrict(previewPriceText, previewPriceUsd, false);
+  const bool previewHasBalanceBtc = parseNonNegativeFloatStrict(previewBalanceText, previewBalanceBtc, true);
+  html.reserve(37200);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
@@ -1737,6 +1743,10 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".ok{background:#e8f7ea;color:#1d5d2d;}";
   html += ".err{background:#fdeaea;color:#8d2020;}";
   html += ".info{background:#eee7db;color:#5c5349;}";
+  html += ".preview-card{background:#2b1700;color:#fff7ec;}";
+  html += ".preview-card h2{color:#fff7ec;}";
+  html += ".preview-value{font-size:34px;font-weight:800;letter-spacing:.03em;line-height:1.05;}";
+  html += ".preview-hint{font-size:13px;color:#f7d9ad;line-height:1.45;margin-top:10px;}";
   html += ".releasebox{display:grid;gap:10px;margin-top:14px;padding:14px 16px;border-radius:14px;background:#f8f4ec;border:1px solid #e5dbc9;}";
   html += ".releasebox .row{font-size:14px;color:#2f2924;}";
   html += ".releasebox strong{color:#171717;}";
@@ -1801,6 +1811,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String("<div><label for=\"wealth_growth_annual_pct\">Portfolio growth % / year</label><input id=\"wealth_growth_annual_pct\" name=\"wealth_growth_annual_pct\" type=\"number\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.wealthGrowthAnnual * 100.0f, 2) + "\"></div>";
   html += String("<div id=\"borrow_fee_wrap\"><label for=\"borrow_fee_annual_pct\">Borrow fee % / year</label><input id=\"borrow_fee_annual_pct\" name=\"borrow_fee_annual_pct\" type=\"number\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.borrowFeeAnnual * 100.0f, 2) + "\"></div>";
   html += "</div></section>";
+
+  html += "<section class=\"card preview-card\"><h2>Freedom Time Preview</h2>";
+  html += "<div id=\"freedom_preview_value\" class=\"preview-value\">--</div>";
+  html += "<div id=\"freedom_preview_hint\" class=\"preview-hint\">Change the values above to preview the result before saving.</div>";
+  html += "</section>";
 
   html += "<section class=\"card\"><h2>Display</h2><div class=\"grid\">";
   html += "<div><label for=\"display_theme_mode\">Display theme</label><select id=\"display_theme_mode\" name=\"display_theme_mode\">";
@@ -1941,7 +1956,21 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const copyLatestReleaseUrlButton=document.getElementById('copy_latest_release_url_button');";
   html += "const mqttPassInput=document.getElementById('mqtt_pass');";
   html += "const clearMqttPass=document.getElementById('clear_mqtt_pass');";
+  html += "const freedomPreviewValue=document.getElementById('freedom_preview_value');";
+  html += "const freedomPreviewHint=document.getElementById('freedom_preview_hint');";
   html += "let validatedSignature='';";
+  html += "let previewPriceUsd=";
+  html += String(previewPriceUsd, 2);
+  html += ";";
+  html += "let previewHasPriceUsd=";
+  html += previewHasPriceUsd ? "true" : "false";
+  html += ";";
+  html += "let previewMqttBalanceBtc=";
+  html += String(previewBalanceBtc, 8);
+  html += ";";
+  html += "let previewHasMqttBalanceBtc=";
+  html += previewHasBalanceBtc ? "true" : "false";
+  html += ";";
   html += "function signature(){return form?new URLSearchParams(new FormData(form)).toString():'';}";
   html += "function setStatus(text,kind){if(!statusBox)return;if(!text){statusBox.style.display='none';statusBox.textContent='';statusBox.className='message info';return;}statusBox.textContent=text;statusBox.className='message '+(kind||'info');statusBox.style.display='block';}";
   html += "function setFirmwareStatus(text,kind){if(!firmwareStatus)return;if(!text){firmwareStatus.style.display='none';firmwareStatus.textContent='';firmwareStatus.className='message info';return;}firmwareStatus.textContent=text;firmwareStatus.className='message '+(kind||'info');firmwareStatus.style.display='block';}";
@@ -1956,6 +1985,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "';if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
   html += FIRMWARE_VERSION;
   html += "');if(!assetAvailable){setReleaseStatus('Latest release loaded, but the matching firmware package was not found. Use manual download if needed.','err');return;}if(!newer){setReleaseStatus(latestNormalized&&latestNormalized===currentNormalized?'This device already matches the latest published release.':'Latest published release is older than this firmware. Manual upload is still available.','info');return;}setReleaseStatus('New firmware is available. You can install it directly or use manual download.','ok');}";
+  html += "function readNumber(id){const el=document.getElementById(id);const value=parseFloat(el&&el.value?el.value:'');return Number.isFinite(value)?value:0;}";
+  html += "function formatMoney(value){if(!(value>=0))return '--';if(value>=1000000)return (value/1000000).toFixed(2)+' mil USD';if(value>=1000)return (value/1000).toFixed(2)+'k USD';return value.toFixed(2)+' USD';}";
+  html += "function computeFreedom(usdWealth,monthlyExpenseToday,inflationAnnual,assetGrowthAnnual,useMode,borrowFeeAnnual){const out={hitCap:false,years:0,months:0,weeks:0,coveredWeeks:0};if(!(usdWealth>0)||!(monthlyExpenseToday>0))return out;if(!(inflationAnnual>=0))inflationAnnual=0;if(!(assetGrowthAnnual>-0.99))assetGrowthAnnual=-0.99;if(!(borrowFeeAnnual>-0.99))borrowFeeAnnual=-0.99;const maxYears=200;const maxMonths=12*maxYears;if(useMode==='1'){let annualExpenseMul=1+inflationAnnual;let annualAssetMul=1+assetGrowthAnnual;let annualDebtMul=1+borrowFeeAnnual;let annualExpense=monthlyExpenseToday*12;let collateralValue=usdWealth;let debt=0;let years=0;while(years<maxYears){collateralValue*=annualAssetMul;debt*=annualDebtMul;if((debt+annualExpense)>collateralValue)break;debt+=annualExpense;annualExpense*=annualExpenseMul;years++;}out.hitCap=years>=maxYears;let partialYear=0;if(!out.hitCap&&annualExpense>0&&collateralValue>debt){partialYear=(collateralValue-debt)/annualExpense;if(partialYear>0.999)partialYear=0.999;if(partialYear<0)partialYear=0;}const coveredMonthsFloat=(years+partialYear)*12;const coveredFullMonths=Math.floor(coveredMonthsFloat);const partialMonth=coveredMonthsFloat-coveredFullMonths;out.years=Math.floor(coveredFullMonths/12);out.months=coveredFullMonths%12;out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=coveredMonthsFloat*4.345;return out;}let monthlyExpenseMul=Math.pow(1+inflationAnnual,1/12);let monthlyAssetMul=Math.pow(1+assetGrowthAnnual,1/12);let monthlyExpense=monthlyExpenseToday;let remaining=usdWealth;let months=0;while(months<maxMonths){remaining*=monthlyAssetMul;if(remaining<monthlyExpense)break;remaining-=monthlyExpense;monthlyExpense*=monthlyExpenseMul;months++;}out.hitCap=months>=maxMonths;out.years=Math.floor(months/12);out.months=months%12;let partialMonth=0;if(monthlyExpense>0&&remaining>0){partialMonth=remaining/monthlyExpense;if(partialMonth>0.999)partialMonth=0.999;if(partialMonth<0)partialMonth=0;}out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=months*4.345+(partialMonth*4.345);return out;}";
+  html += "function formatFreedom(result){if(result.hitCap)return 'FOREVER';if(result.years>99)return String(result.years)+'Y';const years=String(result.years).padStart(2,'0');const months=String(result.months).padStart(2,'0');return years+'Y '+months+'M '+String(result.weeks)+'W';}";
+  html += "function capturePreviewMarketValues(message){const text=String(message||'');const priceMatch=text.match(/Price:\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(priceMatch){const parsed=parseFloat(priceMatch[1]);if(Number.isFinite(parsed)&&parsed>0){previewPriceUsd=parsed;previewHasPriceUsd=true;}}const amountMatch=text.match(/Amount:\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(amountMatch){const parsed=parseFloat(amountMatch[1]);if(Number.isFinite(parsed)&&parsed>=0){previewMqttBalanceBtc=parsed;previewHasMqttBalanceBtc=true;}}}";
+  html += "function updateFreedomPreview(){if(!freedomPreviewValue||!freedomPreviewHint)return;const assetMode=asset?asset.value:'2';const useMode=mode?mode.value:'0';let usdWealth=0;let hint='Preview uses the same freedom-time calculation as the device.';if(assetMode==='1'){usdWealth=readNumber('default_wealth_usd');hint+=' Wealth assumption: '+formatMoney(usdWealth)+'.';}else if(assetMode==='2'){const btc=readNumber('manual_btc_amount');if(!previewHasPriceUsd||!(previewPriceUsd>0)){freedomPreviewValue.textContent='--';freedomPreviewHint.textContent='Run Test Connection to fetch BTC/USD price for the static BTC preview.';return;}usdWealth=btc*previewPriceUsd;hint+=' Static BTC assumption: '+btc.toFixed(8).replace(/0+$/,'').replace(/\\.$/,'')+' BTC at '+previewPriceUsd.toFixed(2)+' USD/BTC = '+formatMoney(usdWealth)+'.';}else{if(!previewHasPriceUsd||!previewHasMqttBalanceBtc||!(previewPriceUsd>0)||!(previewMqttBalanceBtc>=0)){freedomPreviewValue.textContent='--';freedomPreviewHint.textContent='Run Test Connection to load MQTT BTC price and amount for the preview.';return;}usdWealth=previewMqttBalanceBtc*previewPriceUsd;hint+=' MQTT assumption: '+previewMqttBalanceBtc.toFixed(8).replace(/0+$/,'').replace(/\\.$/,'')+' BTC at '+previewPriceUsd.toFixed(2)+' USD/BTC = '+formatMoney(usdWealth)+'.';}const result=computeFreedom(usdWealth,readNumber('monthly_exp_usd'),readNumber('inflation_annual_pct')/100,readNumber('wealth_growth_annual_pct')/100,useMode,readNumber('borrow_fee_annual_pct')/100);freedomPreviewValue.textContent=formatFreedom(result);if(result.hitCap)hint+=' FOREVER means the model reached the device cap of 200 years.';freedomPreviewHint.textContent=hint;}";
   html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
   html += "function updateRefreshControls(){if(!refreshValueInput)return;const settings=refreshSettingsForUnit();refreshValueInput.min=String(settings.min);refreshValueInput.max=String(settings.max);refreshValueInput.step='1';let value=parseInt(refreshValueInput.value||'',10);if(!Number.isFinite(value))value=settings.min;if(value<settings.min)value=settings.min;if(value>settings.max)value=settings.max;refreshValueInput.value=String(value);if(refreshHint)refreshHint.textContent=settings.hint;}";
   html += "function update(){";
@@ -1972,6 +2007,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(setupPinConfirmWrap) setupPinConfirmWrap.classList.toggle('hidden', !pinProtected);";
   html += "if(borrowInput) borrowInput.disabled=!isBorrow;";
   html += "updateRefreshControls();";
+  html += "updateFreedomPreview();";
   html += "}";
   html += "async function refreshWifiList(){";
   html += "if(scanButton)scanButton.disabled=true;";
@@ -1998,6 +2034,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(!data.ok){setStatus(data.message||'Validation failed.','err');return;}";
   html += "if(currentSignature!==signature()){setStatus('Validation finished, but the form changed meanwhile. Run the test again.','info');return;}";
   html += "validatedSignature=currentSignature;";
+  html += "capturePreviewMarketValues(data.message||'');";
+  html += "updateFreedomPreview();";
   html += "if(saveButton)saveButton.disabled=false;";
   html += "setStatus(data.message||'Validation successful.','ok');";
   html += "}catch(err){setStatus('Validation request failed. Keep this phone connected to the device Wi-Fi and try again.','err');}";
@@ -2028,7 +2066,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "}catch(err){setReleaseStatus('Firmware install request failed. Use manual upload if the device does not restart.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;}";
   html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
   html += "}";
-  html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;invalidate('Test the current settings before saving.');}";
+  html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();invalidate('Test the current settings before saving.');}";
   html += "if(asset) asset.addEventListener('change', update);";
   html += "if(mode) mode.addEventListener('change', update);";
   html += "if(setupPinEnabled) setupPinEnabled.addEventListener('change', update);";
@@ -2048,6 +2086,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(validateButton) validateButton.addEventListener('click', validateCurrentSettings);";
   html += "syncOwnerUppercase();";
   html += "update();";
+  html += "updateFreedomPreview();";
   html += "invalidate('Test the current settings before saving.');";
   html += "refreshWifiList();";
   html += "})();";
@@ -2359,10 +2398,12 @@ static void drawInfoScreen(
   const DisplayThemeMode themeMode = sanitizeThemeMode(cfg.displayThemeMode);
   const AssetMode assetMode = sanitizeAssetMode(cfg.assetMode);
   const PortfolioUseMode portfolioUseMode = sanitizePortfolioUseMode(cfg.portfolioUseMode);
+  static constexpr int TITLE_X = 8;
+  static constexpr int TITLE_Y = 12;
   static constexpr int LABEL_X = 10;
   static constexpr int VALUE_X = 142;
-  static constexpr int ROW_Y0 = 10;
-  static constexpr int ROW_STEP = 11;
+  static constexpr int ROW_Y0 = 25;
+  static constexpr int ROW_STEP = 10;
 
   prepareScreen(themeMode);
 
@@ -2373,6 +2414,9 @@ static void drawInfoScreen(
   display.print("%");
 
   display.setTextSize(1);
+  display.setCursor(TITLE_X, TITLE_Y);
+  display.print("SETTINGS");
+
   display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 0));
   if (assetMode == ASSET_MODE_WEALTH) {
     display.print("ASSET TYPE:");
@@ -2485,7 +2529,7 @@ static void drawWealthStatsScreen(
   const int64_t currentBalanceSats = (int64_t)(balanceBtc * 100000000.0 + 0.5);
   static constexpr int TITLE_X = 8;
   static constexpr int ROW_LABEL_X = 10;
-  static constexpr int TITLE_Y = 14;
+  static constexpr int TITLE_Y = 12;
   static constexpr int HEADER_Y = 32;
   static constexpr int ROW_Y0 = 44;
   static constexpr int ROW_STEP = 14;
@@ -2732,7 +2776,9 @@ static void drawFreedomCheckinScreen(
   display.print("%");
 
   display.setTextSize(1);
-  display.setCursor(8, 12);
+  static constexpr int TITLE_X = 8;
+  static constexpr int TITLE_Y = 12;
+  display.setCursor(TITLE_X, TITLE_Y);
   display.print("FREEDOM CHANGE");
 
   static constexpr int LAST_X = 10;

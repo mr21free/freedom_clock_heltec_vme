@@ -89,6 +89,9 @@ Recommended before publishing your own fork:
 Product page:
 - https://heltec.org/project/vision-master-e213/
 
+Optional night reading:
+- see [docs/FRONTLIGHT.md](docs/FRONTLIGHT.md) for a small warm-white front-light concept using the exposed `3V3`, `GND`, and optional `GPIO42` header access
+
 ## Data Sources
 
 In `BTC` mode, the sketch subscribes to:
@@ -232,7 +235,7 @@ This keeps updates easy without asking normal users to run the security tool.
 Build public manual-update packages on your Mac with:
 
 ```bash
-./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.9
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.06.1
 ```
 
 That creates a gitignored output folder under:
@@ -299,7 +302,7 @@ Typical flow:
 
 ```bash
 ./tools/FreedomClockSecurityTool.command doctor
-./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.9
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.06.1
 ./tools/FreedomClockSecurityTool.command bootstrap-idf
 ./tools/FreedomClockSecurityTool.command build-secure-boot-project
 ./tools/FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-test-001

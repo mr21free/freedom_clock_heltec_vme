@@ -60,13 +60,13 @@ Never commit:
 Build normal user-facing update files with:
 
 ```bash
-./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.9
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.06.1
 ```
 
 This creates files under:
 
 ```text
-provisioning-workdir/public-updates/freedom-clock-v2026.05.05.9/
+provisioning-workdir/public-updates/freedom-clock-v2026.05.06.1/
 ```
 
 Typical output:
@@ -150,13 +150,13 @@ Release rule:
 The publish command is dry-run by default:
 
 ```bash
-./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.9
+./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.06.1
 ```
 
 Only this publishes:
 
 ```bash
-./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.9 --confirm-publish
+./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.06.1 --confirm-publish
 ```
 
 ## Recovery Expectations
