@@ -4,5 +4,6 @@ secrets.h
 provisioning-workdir/
 freedom-clock-setup-preview.html
 freedom-clock-test-environment.html
+dev-local/
 __pycache__/
 *.pyc

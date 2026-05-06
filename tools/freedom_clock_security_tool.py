@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import shlex
@@ -11,6 +12,9 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,6 +31,8 @@ BOOTLOADER_PROJECT_DIR = WORKDIR / "idf-secure-boot-project"
 BOOTLOADERS_DIR = WORKDIR / "bootloaders"
 BUILD_ROOT = WORKDIR / "arduino-build"
 DEFAULT_IDF_ROOT = WORKDIR / "esp-idf"
+DOCS_DIR = REPO_ROOT / "docs"
+RELEASE_NOTES_DIR = DOCS_DIR / "releases"
 
 BOARD_FQBN = "Heltec-esp32:esp32:heltec_vision_master_e_213"
 ARDUINO_CLI_DEFAULT = Path(
@@ -91,7 +97,7 @@ class ToolError(RuntimeError):
 
 
 def ensure_workspace() -> None:
-    for path in [WORKDIR, RELEASES_DIR, VAULT_DIR, BUNDLES_DIR, PUBLIC_UPDATES_DIR, BOOTLOADERS_DIR, BUILD_ROOT]:
+    for path in [WORKDIR, RELEASES_DIR, VAULT_DIR, BUNDLES_DIR, PUBLIC_UPDATES_DIR, BOOTLOADERS_DIR, BUILD_ROOT, DOCS_DIR, RELEASE_NOTES_DIR]:
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -195,6 +201,26 @@ def latest_release_dir() -> Path:
     return max(releases, key=lambda path: path.stat().st_mtime)
 
 
+def latest_manual_update_dir() -> Path:
+    ensure_workspace()
+    releases = [path for path in PUBLIC_UPDATES_DIR.iterdir() if path.is_dir()]
+    if not releases:
+        raise ToolError("No manual update package exists yet. Run build-manual-update first.")
+    return max(releases, key=lambda path: path.stat().st_mtime)
+
+
+def github_repo_slug() -> str:
+    result = run_command(
+        ["git", "config", "--get", "remote.origin.url"],
+        cwd=REPO_ROOT,
+    )
+    remote = (result.stdout or "").strip()
+    match = re.search(r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/.]+)(?:\.git)?$", remote)
+    if not match:
+        raise ToolError(f"Could not parse GitHub owner/repo from origin URL: {remote or 'missing'}")
+    return f"{match.group('owner')}/{match.group('repo')}"
+
+
 def parse_flash_args(flash_args_path: Path) -> dict[str, str]:
     lines = [line.strip() for line in flash_args_path.read_text().splitlines() if line.strip()]
     offsets: dict[str, str] = {}
@@ -205,6 +231,84 @@ def parse_flash_args(flash_args_path: Path) -> dict[str, str]:
         offset, name = parts
         offsets[name] = offset
     return offsets
+
+
+def github_token() -> str:
+    token = (
+        os.environ.get("FREEDOM_CLOCK_GITHUB_TOKEN")
+        or os.environ.get("GITHUB_TOKEN")
+        or os.environ.get("GH_TOKEN")
+    )
+    if not token:
+        raise ToolError(
+            "GitHub token not found. Set FREEDOM_CLOCK_GITHUB_TOKEN or GITHUB_TOKEN before publishing a release."
+        )
+    return token
+
+
+def github_api_request(
+    method: str,
+    url: str,
+    *,
+    token: str,
+    payload: dict | list | None = None,
+    binary: bytes | None = None,
+    content_type: str = "application/vnd.github+json",
+) -> tuple[int, dict | list | str]:
+    if payload is not None and binary is not None:
+        raise ToolError("Pass either JSON payload or binary payload, not both.")
+
+    data: bytes | None = None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "FreedomClockSecurityTool/2026",
+    }
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json; charset=utf-8"
+    elif binary is not None:
+        data = binary
+        headers["Content-Type"] = content_type
+
+    request = urllib.request.Request(url, data=data, method=method, headers=headers)
+
+    try:
+        with urllib.request.urlopen(request) as response:
+            raw = response.read()
+            body_text = raw.decode("utf-8", errors="replace") if raw else ""
+            if not body_text:
+                return response.status, ""
+            try:
+                return response.status, json.loads(body_text)
+            except json.JSONDecodeError:
+                return response.status, body_text
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        body_text = raw.decode("utf-8", errors="replace") if raw else ""
+        if body_text:
+            try:
+                parsed = json.loads(body_text)
+            except json.JSONDecodeError:
+                parsed = body_text
+        else:
+            parsed = ""
+        return exc.code, parsed
+    except urllib.error.URLError as exc:
+        raise ToolError(f"GitHub API request failed: {exc}") from exc
+
+
+def github_api_error_message(body: dict | list | str) -> str:
+    if isinstance(body, dict):
+        message = str(body.get("message") or "Unknown GitHub API error")
+        errors = body.get("errors")
+        if errors:
+            return f"{message} ({errors})"
+        return message
+    if isinstance(body, list):
+        return json.dumps(body)
+    return str(body) if body else "Unknown GitHub API error"
 
 
 def detect_tools() -> dict[str, str | bool | list[str]]:
@@ -655,6 +759,161 @@ def build_manual_update(args: argparse.Namespace) -> Path:
     (output_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Manual update package ready: {output_dir}")
     return output_dir
+
+
+def resolve_manual_update_dir(args: argparse.Namespace) -> Path:
+    if getattr(args, "release_name", None):
+        candidate = PUBLIC_UPDATES_DIR / args.release_name
+        if not candidate.exists():
+            raise ToolError(f"Manual update package not found: {candidate}")
+        return candidate
+    return latest_manual_update_dir()
+
+
+def default_release_notes_path(version: str) -> Path:
+    return RELEASE_NOTES_DIR / f"v{version}.md"
+
+
+def release_title_for_version(version: str) -> str:
+    return f"Freedom Clock {version}"
+
+
+def ensure_release_notes_file(path: Path, version: str) -> None:
+    if path.exists():
+        return
+    template = textwrap.dedent(
+        f"""\
+        # {release_title_for_version(version)}
+
+        ## Highlights
+
+        - Describe the most important user-facing changes here.
+        - Mention any firmware update or setup-flow changes.
+        - Mention any security, privacy, or reliability improvements.
+
+        ## Installation
+
+        - `FreedomClock-{version}-manual-update-open.bin` for normal devices
+        - `FreedomClock-{version}-manual-update-secure.bin` for security-hardened devices
+        """
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(template)
+
+
+def upload_release_asset(upload_url_template: str, asset_path: Path, token: str) -> None:
+    upload_base = upload_url_template.split("{", 1)[0]
+    upload_url = f"{upload_base}?name={urllib.parse.quote(asset_path.name)}"
+    mime_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
+    status, body = github_api_request(
+        "POST",
+        upload_url,
+        token=token,
+        binary=asset_path.read_bytes(),
+        content_type=mime_type,
+    )
+    if status not in (200, 201):
+        raise ToolError(f"Asset upload failed for {asset_path.name}: {github_api_error_message(body)}")
+
+
+def publish_github_release(args: argparse.Namespace) -> None:
+    ensure_workspace()
+    token = github_token()
+    repo_slug = github_repo_slug()
+    manual_dir = resolve_manual_update_dir(args)
+    manifest = json.loads((manual_dir / "manifest.json").read_text())
+    version = manifest["firmware_version"]
+    tag_name = args.tag or f"v{version}"
+    release_title = args.title or release_title_for_version(version)
+    notes_path = Path(args.notes_file).expanduser() if args.notes_file else default_release_notes_path(version)
+    ensure_release_notes_file(notes_path, version)
+    release_body = notes_path.read_text().strip()
+    if not release_body:
+        raise ToolError(f"Release notes file is empty: {notes_path}")
+
+    print_step(f"Publishing GitHub Release {tag_name} to {repo_slug}")
+
+    api_base = f"https://api.github.com/repos/{repo_slug}/releases"
+    release_payload = {
+        "tag_name": tag_name,
+        "name": release_title,
+        "body": release_body,
+        "draft": bool(args.draft),
+        "prerelease": bool(args.prerelease),
+        "generate_release_notes": False,
+    }
+
+    status, body = github_api_request("POST", api_base, token=token, payload=release_payload)
+    if status in (200, 201):
+        release = body
+    elif status == 422:
+        fetch_status, fetch_body = github_api_request(
+            "GET",
+            f"{api_base}/tags/{urllib.parse.quote(tag_name)}",
+            token=token,
+        )
+        if fetch_status != 200 or not isinstance(fetch_body, dict):
+            raise ToolError(f"Could not fetch existing release for {tag_name}: {github_api_error_message(fetch_body)}")
+        release_id = fetch_body["id"]
+        patch_status, patch_body = github_api_request(
+            "PATCH",
+            f"{api_base}/{release_id}",
+            token=token,
+            payload={
+                "name": release_title,
+                "body": release_body,
+                "draft": bool(args.draft),
+                "prerelease": bool(args.prerelease),
+            },
+        )
+        if patch_status != 200 or not isinstance(patch_body, dict):
+            raise ToolError(f"Could not update existing release {tag_name}: {github_api_error_message(patch_body)}")
+        release = patch_body
+    else:
+        raise ToolError(f"Could not create GitHub Release {tag_name}: {github_api_error_message(body)}")
+
+    if not isinstance(release, dict):
+        raise ToolError("GitHub API returned an unexpected release payload.")
+
+    upload_url = release["upload_url"]
+    assets_url = release["assets_url"]
+    html_url = release.get("html_url", "")
+
+    existing_assets: dict[str, int] = {}
+    assets_status, assets_body = github_api_request("GET", assets_url, token=token)
+    if assets_status == 200 and isinstance(assets_body, list):
+        for asset in assets_body:
+            if isinstance(asset, dict) and "name" in asset and "id" in asset:
+                existing_assets[str(asset["name"])] = int(asset["id"])
+
+    asset_paths = [
+        manual_dir / metadata["filename"]
+        for metadata in manifest["files"].values()
+    ]
+    for extra_name in ["SHA256SUMS.txt", "manifest.json", "README.txt"]:
+        asset_paths.append(manual_dir / extra_name)
+
+    seen_names: set[str] = set()
+    for asset_path in asset_paths:
+        if not asset_path.exists():
+            raise ToolError(f"Release asset not found: {asset_path}")
+        if asset_path.name in seen_names:
+            continue
+        seen_names.add(asset_path.name)
+        if asset_path.name in existing_assets:
+            delete_status, delete_body = github_api_request(
+                "DELETE",
+                f"{api_base}/assets/{existing_assets[asset_path.name]}",
+                token=token,
+            )
+            if delete_status not in (204, 200):
+                raise ToolError(f"Could not replace existing asset {asset_path.name}: {github_api_error_message(delete_body)}")
+        print_step(f"Uploading {asset_path.name}")
+        upload_release_asset(upload_url, asset_path, token)
+
+    print(f"GitHub Release published: {html_url or f'https://github.com/{repo_slug}/releases/tag/{tag_name}'}")
+    print(f"Release notes source: {notes_path}")
+    print(f"Assets uploaded from: {manual_dir}")
 
 
 def prompt_confirmation(required_text: str, skip_prompt: bool) -> None:
@@ -1205,6 +1464,15 @@ def build_parser() -> argparse.ArgumentParser:
     manual_update_parser = subparsers.add_parser("build-manual-update", help="Compile the sketch and assemble public .bin files for setup-page firmware uploads.")
     manual_update_parser.add_argument("--release-name", help="Optional release bundle name.")
     manual_update_parser.set_defaults(func=build_manual_update)
+
+    publish_release_parser = subparsers.add_parser("publish-github-release", help="Create or update a proper GitHub Release and upload the manual update assets.")
+    publish_release_parser.add_argument("--release-name", help="Manual update package directory name under provisioning-workdir/public-updates/. Defaults to the newest one.")
+    publish_release_parser.add_argument("--tag", help="Git tag to publish. Defaults to v<firmware-version> from the manual update package.")
+    publish_release_parser.add_argument("--title", help="Release title shown on GitHub. Defaults to 'Freedom Clock <version>'.")
+    publish_release_parser.add_argument("--notes-file", help="Markdown file to use as the release description. Defaults to docs/releases/v<version>.md.")
+    publish_release_parser.add_argument("--draft", action="store_true", help="Create or update the GitHub Release as a draft.")
+    publish_release_parser.add_argument("--prerelease", action="store_true", help="Mark the GitHub Release as a prerelease.")
+    publish_release_parser.set_defaults(func=publish_github_release)
 
     keys_parser = subparsers.add_parser("generate-keys", help="Generate signing and flash-encryption keys.")
     keys_parser.add_argument("--device-id", required=True, help="Stable device label, for example fc-001.")

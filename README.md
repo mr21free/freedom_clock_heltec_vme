@@ -254,7 +254,7 @@ Today there is no automatic online updater yet, so manual upload through the set
 
 This repository now includes a custom [partitions.csv](partitions.csv) with an `nvs_keys` partition so the firmware can auto-enable encrypted NVS when the hardware has already been provisioned for flash encryption.
 
-For the repo-side production boundary in one place, see [PRODUCTION_SECURITY.md](PRODUCTION_SECURITY.md).
+For the repo-side production boundary in one place, see [docs/PRODUCTION_SECURITY.md](docs/PRODUCTION_SECURITY.md).
 
 What this means:
 - on a production-hardened device, saved Wi-Fi and MQTT secrets can be protected at rest
@@ -309,6 +309,7 @@ Later wired updates for an already locked device use the same tool:
 Notes:
 - `build-manual-update` creates user-facing `.bin` files for the setup-page `Firmware Update` flow. Publish those on GitHub Releases, not the whole gitignored workspace.
 - the setup-page release checker reads the latest published GitHub Release, not just a git tag, so publish an actual GitHub Release when you want users to see update notes there.
+- `publish-github-release` creates or updates the real GitHub Release page and uploads the firmware assets, checksums, and manifest.
 - `provision-production` defaults to `full` mode: flash encryption, signed bootloader + app, and final secure-download lock.
 - `dry-run-provisioning` prepares the release, keys, and encrypted bundle, then prints the exact board mutations it would perform without touching the board.
 - `provision-staging` is the safer first-hardware-trial profile: full security path, but no final secure-download lock and no digest-slot revocation.
@@ -316,6 +317,8 @@ Notes:
 - by default the tool keeps the two spare Secure Boot digest slots unused, so you keep some room for future signing-key rotation; only use `--revoke-unused-digests` if you really want the stricter one-key-only posture.
 - the firmware now supports local manual app uploads through the setup page; use the `open` package for normal devices and the `secure` package for security-hardened devices.
 - keep the cable-based `update-secure-device` path as the manufacturer fallback while automatic online updating is still not built.
+
+For the human release workflow, see [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Testing The 3rd And 4th Screens
 
