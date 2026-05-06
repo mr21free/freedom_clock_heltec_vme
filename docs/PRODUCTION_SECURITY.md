@@ -43,7 +43,7 @@ Check the local host toolchain:
 Build the user-facing manual firmware update package:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.7
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ```
 
 Bootstrap a local ESP-IDF checkout for the secure-boot helper bootloader:

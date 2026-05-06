@@ -226,7 +226,7 @@ This keeps updates local and easy, without asking normal users to run the produc
 Build public manual-update packages on your Mac with:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.7
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ```
 
 That creates a gitignored output folder under:
@@ -292,7 +292,7 @@ Typical flow:
 
 ```bash
 ./FreedomClockSecurityTool.command doctor
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.7
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ./FreedomClockSecurityTool.command bootstrap-idf
 ./FreedomClockSecurityTool.command build-secure-boot-project
 ./FreedomClockSecurityTool.command dry-run-provisioning --port /dev/cu.usbmodemXXXX --device-id fc-stage-001

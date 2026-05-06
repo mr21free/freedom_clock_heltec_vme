@@ -23,26 +23,26 @@ The setup-page `Check Latest Release` button reads GitHub's **published Releases
 4. Create and push the Git tag:
 
 ```bash
-git tag -a v2026.05.05.7 -m "Freedom Clock 2026.05.05.7"
-git push origin v2026.05.05.7
+git tag -a v2026.05.05.8 -m "Freedom Clock 2026.05.05.8"
+git push origin v2026.05.05.8
 ```
 
 5. Build the public firmware package:
 
 ```bash
-./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.7
+./FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.05.8
 ```
 
 6. Review or edit the release notes file:
 
 ```text
-docs/releases/v2026.05.05.7.md
+docs/releases/v2026.05.05.8.md
 ```
 
 7. Publish the actual GitHub Release and upload the assets:
 
 ```bash
-./FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.7
+./FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.05.8
 ```
 
 That uploads:

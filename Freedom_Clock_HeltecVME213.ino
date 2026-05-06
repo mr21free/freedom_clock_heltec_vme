@@ -142,7 +142,7 @@ static constexpr char CONFIG_NAMESPACE[] = "freedomclk";
 static constexpr char HISTORY_NAMESPACE[] = "wealthhist";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.05.7";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.05.8";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme213/releases";
 static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme213/releases/latest";
 static constexpr char GITHUB_API_VERSION[] = "2022-11-28";
@@ -1736,8 +1736,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".releasebox .row{font-size:14px;color:#2f2924;}";
   html += ".releasebox strong{color:#171717;}";
   html += ".release-notes{font-size:13px;color:#5c5349;line-height:1.5;white-space:pre-wrap;}";
+  html += ".copyline{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-top:10px;}";
+  html += ".copytext{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid #d8cdbb;border-radius:12px;background:#fdfbf6;color:#2f2924;font-size:13px;overflow-wrap:anywhere;}";
   html += ".actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}";
   html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;}";
+  html += "button.small{padding:10px 14px;font-size:13px;}";
   html += "button.secondary{background:#ded4c2;color:#211d19;}";
   html += "button[disabled]{opacity:.45;cursor:not-allowed;}";
   html += "a.extlink{color:#8b4f00;font-weight:700;text-decoration:none;}";
@@ -1871,9 +1874,10 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += hardwareSecureBootActive
     ? "For this device, choose the secure package."
     : "For this device, choose the open package.";
-  html += " Need the newest .bin file? Open <a class=\"extlink\" href=\"";
+  html += " Need the newest .bin file? Use this URL outside the captive Wi-Fi browser:";
+  html += "<div class=\"copyline\"><div id=\"releases_url_text\" class=\"copytext\">";
   html += GITHUB_RELEASES_URL;
-  html += "\" target=\"_blank\" rel=\"noopener noreferrer\">GitHub Releases</a>.</div>";
+  html += "</div><button id=\"copy_releases_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
   html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_upload_button\" type=\"submit\">Upload Firmware</button><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check Latest Release</button></div>";
   html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
   html += "<div id=\"release_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
@@ -1883,9 +1887,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<div class=\"row\"><strong>Release title:</strong> <span id=\"release_name\">--</span></div>";
   html += "<div class=\"row\"><strong>Changes and improvements:</strong></div>";
   html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
-  html += "<div class=\"row\"><a id=\"release_page_link\" class=\"extlink hidden\" href=\"";
-  html += GITHUB_RELEASES_URL;
-  html += "\" target=\"_blank\" rel=\"noopener noreferrer\">Open latest release page</a></div>";
+  html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>Latest release URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
   html += "</div>";
   html += "</form></section>";
   html += "<script>";
@@ -1923,7 +1925,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const releaseLatestVersion=document.getElementById('release_latest_version');";
   html += "const releaseName=document.getElementById('release_name');";
   html += "const releaseNotes=document.getElementById('release_notes');";
-  html += "const releasePageLink=document.getElementById('release_page_link');";
+  html += "const releasesUrlText=document.getElementById('releases_url_text');";
+  html += "const copyReleasesUrlButton=document.getElementById('copy_releases_url_button');";
+  html += "const latestReleaseUrlRow=document.getElementById('latest_release_url_row');";
+  html += "const latestReleaseUrlText=document.getElementById('latest_release_url_text');";
+  html += "const copyLatestReleaseUrlButton=document.getElementById('copy_latest_release_url_button');";
   html += "const mqttPassInput=document.getElementById('mqtt_pass');";
   html += "const clearMqttPass=document.getElementById('clear_mqtt_pass');";
   html += "let validatedSignature='';";
@@ -1934,10 +1940,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function invalidate(msg){validatedSignature='';if(saveButton)saveButton.disabled=true;if(msg)setStatus(msg,'info');}";
   html += "function syncOwnerUppercase(){if(ownerInput)ownerInput.value=(ownerInput.value||'').toUpperCase();}";
   html += "function normalizeVersion(text){return String(text||'').trim().replace(/^v/i,'');}";
-  html += "function hideReleaseSummary(){if(releaseSummary)releaseSummary.classList.add('hidden');if(releasePageLink)releasePageLink.classList.add('hidden');}";
-  html += "function renderReleaseInfo(data){const latestTag=String((data&&data.tag)||'').trim();const latestTitle=String((data&&data.name)||latestTag||'Unnamed release').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseName)releaseName.textContent=latestTitle;if(releaseNotes)releaseNotes.textContent=notes;if(releasePageLink){if(data&&data.html_url){releasePageLink.href=String(data.html_url);releasePageLink.classList.remove('hidden');}else{releasePageLink.href='";
+  html += "async function copyText(text,label){const value=String(text||'').trim();if(!value){setReleaseStatus('Nothing to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{const area=document.createElement('textarea');area.value=value;area.setAttribute('readonly','');area.style.position='fixed';area.style.left='-9999px';document.body.appendChild(area);area.select();document.execCommand('copy');document.body.removeChild(area);}setReleaseStatus((label||'Link')+' copied. If iOS blocks clipboard access, select the URL text manually.','ok');}catch(err){setReleaseStatus('Copy failed. Select the URL text manually and copy it from there.','err');}}";
+  html += "function hideReleaseSummary(){if(releaseSummary)releaseSummary.classList.add('hidden');if(latestReleaseUrlRow)latestReleaseUrlRow.classList.add('hidden');}";
+  html += "function renderReleaseInfo(data){const latestTag=String((data&&data.tag)||'').trim();const latestTitle=String((data&&data.name)||latestTag||'Unnamed release').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseName)releaseName.textContent=latestTitle;if(releaseNotes)releaseNotes.textContent=notes;if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
   html += GITHUB_RELEASES_URL;
-  html += "';releasePageLink.classList.add('hidden');}}if(releaseSummary)releaseSummary.classList.remove('hidden');const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
+  html += "';if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
   html += FIRMWARE_VERSION;
   html += "');setReleaseStatus(latestNormalized&&latestNormalized===currentNormalized?'This device already matches the latest published release.':'Latest published release loaded.','ok');}";
   html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
@@ -2012,6 +2019,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){if(firmwareUploadButton)firmwareUploadButton.disabled=false;setFirmwareStatus('', 'info');});";
   html += "if(firmwareForm){firmwareForm.addEventListener('submit', function(event){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){event.preventDefault();setFirmwareStatus('Choose a firmware .bin file first.','err');return;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){event.preventDefault();setFirmwareStatus('Firmware file must end with .bin.','err');return;}if(firmwareUploadButton)firmwareUploadButton.disabled=true;setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');});}";
   html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
+  html += "if(copyReleasesUrlButton) copyReleasesUrlButton.addEventListener('click', function(){copyText(releasesUrlText?releasesUrlText.textContent:'','GitHub Releases URL');});";
+  html += "if(copyLatestReleaseUrlButton) copyLatestReleaseUrlButton.addEventListener('click', function(){copyText(latestReleaseUrlText?latestReleaseUrlText.textContent:'','Latest release URL');});";
   html += "if(scanButton) scanButton.addEventListener('click', refreshWifiList);";
   html += "if(validateButton) validateButton.addEventListener('click', validateCurrentSettings);";
   html += "syncOwnerUppercase();";
