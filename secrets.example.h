@@ -2,8 +2,7 @@
 
 // Optional bootstrap values.
 // These stay inactive unless you also opt in with:
-// #define FREEDOM_CLOCK_USE_SECRETS_BOOTSTRAP 1
-// That keeps normal first boot and factory reset behavior generic.
+// #define USE_SECRETS_BOOTSTRAP 1
 
 static const char* WIFI_SSID     = "YOUR_WIFI_NAME";
 static const char* WIFI_PASS     = "YOUR_WIFI_PASSWORD";
@@ -17,5 +16,9 @@ static const char* MQTT_PASS     = "YOUR_MQTT_PASSWORD";
 // Uncomment temporarily to seed one year of synthetic daily history into
 // the device's normal stats storage, including a visible last-week move
 // for the weekly freedom ritual screen, then flash once and remove again.
-// #define FREEDOM_CLOCK_ENABLE_TEST_HISTORY 1
-// #define FREEDOM_CLOCK_FORCE_TEST_HISTORY_RESEED 1
+// #define ENABLE_TEST_HISTORY 1
+// #define FORCE_TEST_HISTORY_ON_EVERY_BOOT 1
+
+// Battery stats logging is enabled by default.
+// Set to 0 only if you do not want the setup page to collect calibration samples.
+// #define LOG_BATTERY_STATS 0

@@ -21,7 +21,7 @@ For a first product-quality prototype, I would start with `2` to `4` warm-white 
 
 ## Recommended Board Points
 
-The Heltec Vision Master E213 exposes useful pads on the side headers. Use the official pin map for your board revision before soldering.
+The Heltec Vision Master E-series boards expose useful pads on the side headers. Use the official pin map for your exact board revision before soldering.
 
 Recommended points:
 - `3V3`: LED power
@@ -35,6 +35,34 @@ Avoid these pins:
 - `GPIO17`: marked as `ADC_CTRL` on the Heltec pin map
 - `GPIO45` / `GPIO46`: avoid because they are already involved in board-specific control/strap behavior
 - `5V` or `VBAT`: avoid for the first prototype unless the LED module is explicitly designed for it
+
+## QuickLink And UART Connectors
+
+Heltec lists the Vision Master E213 sensor interfaces as `SH2.0-4P` / QuickLink-compatible connectors. Confirm the same connector and pinout on E290 before ordering or soldering. The battery connector is different: `SH1.25-2P`.
+
+If a connector is labelled `3V3`, `GND`, `RX`, and `TX`, treat it as a UART connector:
+- `3V3` and `GND` can power a tiny LED module if the current draw is small
+- `RX` and `TX` are serial data pins, not LED power pins
+- do not connect LEDs directly to `RX` or `TX`
+
+For a plug-in cable, do not rely on only one name. Heltec calls the board connector `SH2.0-4P`, but sellers often use different names for 2.0 mm 4-pin cables. Search for:
+
+```text
+SH2.0-4P cable
+PH2.0 4P cable
+HY2.0 4P cable
+2.0mm 4 pin pigtail
+Grove 4 pin cable
+Heltec QuickLink 4P cable
+```
+
+Connector naming is messy across sellers. `JST-SH` normally means 1.0 mm pitch, so the phrase `JST SH 2.0` can be misleading. Match the pitch, pin count, latch shape, and photos before ordering. Do not confuse it with the smaller `SH1.25-2P` battery plug.
+
+## Solar
+
+The E-series product information documents a 3.7 V lithium battery connector and onboard charge/discharge management, but it does not document a dedicated solar panel input. For solar, use an external solar LiPo charger/power-manager module and feed the device through the normal battery/USB power path only after testing voltage, polarity, and charge behavior.
+
+Do not connect a bare solar panel directly to the battery connector.
 
 ## Wiring Option A: Simple Manual Button
 
@@ -108,5 +136,6 @@ I would not make this default until the hardware layout is tested, because the b
 
 - Heltec Vision Master E213 docs and pin map: https://docs.heltec.org/en/node/esp32/ht_vme213/index.html
 - Heltec Vision Master E213 pin map image: https://resource.heltec.cn/download/HT-VME213/HT-VME213.png
+- Heltec Vision Master E290 docs and pin map: check the current Heltec documentation for your exact board revision before soldering
 - Adafruit Warm White LED Sequins: https://www.adafruit.com/product/1758
 - DFRobot 3 V warm-white ultra-thin LED strip: https://www.dfrobot.com/product-2402.html

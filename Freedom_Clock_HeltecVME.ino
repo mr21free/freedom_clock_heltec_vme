@@ -12,10 +12,12 @@
 #include "esp_partition.h"
 #include "esp_flash_encrypt.h"
 #include "esp_secure_boot.h"
+#include "esp_random.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/rtc_io.h"
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -23,21 +25,61 @@
 
 #if __has_include("secrets.h")
 #include "secrets.h"
-#define FREEDOM_CLOCK_HAS_SECRETS 1
+#define HAS_SECRETS 1
 #else
-#define FREEDOM_CLOCK_HAS_SECRETS 0
+#define HAS_SECRETS 0
 #endif
 
-#ifndef FREEDOM_CLOCK_ENABLE_TEST_HISTORY
-#define FREEDOM_CLOCK_ENABLE_TEST_HISTORY 0
+#ifndef ENABLE_TEST_HISTORY
+#define ENABLE_TEST_HISTORY 0
 #endif
 
-#ifndef FREEDOM_CLOCK_FORCE_TEST_HISTORY_RESEED
-#define FREEDOM_CLOCK_FORCE_TEST_HISTORY_RESEED 0
+#ifndef FORCE_TEST_HISTORY_ON_EVERY_BOOT
+#define FORCE_TEST_HISTORY_ON_EVERY_BOOT 0
 #endif
 
-#ifndef FREEDOM_CLOCK_USE_SECRETS_BOOTSTRAP
-#define FREEDOM_CLOCK_USE_SECRETS_BOOTSTRAP 0
+#ifndef USE_SECRETS_BOOTSTRAP
+#define USE_SECRETS_BOOTSTRAP 0
+#endif
+
+#ifndef LOG_BATTERY_STATS
+#define LOG_BATTERY_STATS 1
+#endif
+
+// ============================================================
+// Board profile
+// ============================================================
+// Heltec Vision Master boards do not expose a reliable runtime model ID.
+// The Arduino board profile gives us compile-time macros instead, so one
+// firmware source can select the right display driver for each target.
+#if defined(HELTEC_VISION_MASTER_E290) || defined(ARDUINO_HELTEC_VISION_MASTER_E290) || defined(Vision_Master_E290)
+#define DEVICE_PROFILE_E290 1
+#else
+#define DEVICE_PROFILE_E290 0
+#endif
+
+#if defined(HELTEC_VISION_MASTER_E_213) || defined(ARDUINO_HELTEC_VISION_MASTER_E_213) || defined(Vision_Master_E213)
+#define DEVICE_PROFILE_E213 1
+#else
+#define DEVICE_PROFILE_E213 0
+#endif
+
+#if DEVICE_PROFILE_E290
+using FreedomClockDisplay = EInkDisplay_VisionMasterE290;
+static constexpr char DEVICE_MODEL_NAME[] = "E290";
+static constexpr int DEVICE_DISPLAY_WIDTH = 296;
+static constexpr int DEVICE_DISPLAY_HEIGHT = 128;
+#elif DEVICE_PROFILE_E213
+using FreedomClockDisplay = EInkDisplay_VisionMasterE213;
+static constexpr char DEVICE_MODEL_NAME[] = "E213";
+static constexpr int DEVICE_DISPLAY_WIDTH = 250;
+static constexpr int DEVICE_DISPLAY_HEIGHT = 122;
+#else
+// Keep local development safe if a non-Heltec board profile is selected.
+using FreedomClockDisplay = EInkDisplay_VisionMasterE213;
+static constexpr char DEVICE_MODEL_NAME[] = "E213";
+static constexpr int DEVICE_DISPLAY_WIDTH = 250;
+static constexpr int DEVICE_DISPLAY_HEIGHT = 122;
 #endif
 
 // ============================================================
@@ -50,6 +92,7 @@ static constexpr float DEFAULT_WEALTH_GROWTH_ANNUAL = 0.10f;
 static constexpr float DEFAULT_WEALTH_USD = 1000000.0f;
 static constexpr float DEFAULT_BORROW_FEE_ANNUAL = 0.08f;
 static constexpr float DEFAULT_MANUAL_BTC_AMOUNT = 0.1f;
+static constexpr char DEFAULT_MANUAL_BTC_AMOUNT_TEXT[] = "0.1";
 
 enum AssetMode {
   ASSET_MODE_BTC = 0,
@@ -94,7 +137,7 @@ static constexpr uint16_t MAX_REFRESH_INTERVAL_MINUTES = 10080;
 static constexpr uint64_t MICROSECONDS_PER_MINUTE = 60ULL * 1000000ULL;
 
 // ============================================================
-// Hardware pins (Vision Master E213)
+// Hardware pins (Vision Master E-series)
 // ============================================================
 static constexpr int PIN_EINK_POWER = 45;  // E-ink VCC enable
 static constexpr int PIN_BAT_ADC = 7;      // VBAT_Read
@@ -111,6 +154,8 @@ static constexpr float VBAT_SCALE = 4.9f;
 // ============================================================
 static constexpr size_t VALUE_BUFFER_SIZE = 16;
 static constexpr size_t OWNER_NAME_SIZE = 24;
+static constexpr size_t OWNER_NAME_MAX_DISPLAY_CHARS = 19;
+static constexpr size_t MANUAL_BTC_TEXT_SIZE = 24;
 static constexpr size_t WIFI_SSID_SIZE = 33;
 static constexpr size_t WIFI_PASS_SIZE = 65;
 static constexpr size_t MQTT_SERVER_SIZE = 64;
@@ -133,21 +178,24 @@ static constexpr uint16_t PRICE_HTTP_TIMEOUT_MS = 8000;
 static constexpr uint16_t FIRMWARE_HTTP_TIMEOUT_MS = 20000;
 static constexpr uint32_t FIRMWARE_DOWNLOAD_IDLE_TIMEOUT_MS = 15000;
 static constexpr uint16_t BUTTON_POLL_DELAY_MS = 20;
-static constexpr uint32_t CONFIG_BUTTON_HOLD_MS = 2500;
+static constexpr uint32_t CONFIG_BUTTON_HOLD_MS = 5000;
 static constexpr uint32_t FACTORY_RESET_HOLD_MS = 10000;
 static constexpr uint32_t SECOND_PRESS_WINDOW_MS = 700;
 static constexpr uint32_t CONFIG_PORTAL_DELAY_MS = 10;
-static constexpr uint32_t CONFIG_PORTAL_UNLOCK_TIMEOUT_MS = 120000;
+static constexpr uint32_t CONFIG_PORTAL_UNLOCK_TIMEOUT_MS = 600000;
 static constexpr uint16_t CONFIG_PORTAL_PORT = 80;
 static constexpr uint16_t CONFIG_DNS_PORT = 53;
 static constexpr size_t PORTAL_FIRMWARE_MESSAGE_SIZE = 160;
 static constexpr char CONFIG_NAMESPACE[] = "freedomclk";
 static constexpr char HISTORY_NAMESPACE[] = "wealthhist";
+static constexpr char BATTERY_LOG_NAMESPACE[] = "batlog";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.06.1";
-static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme213/releases";
-static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme213/releases/latest";
+static constexpr uint32_t BATTERY_LOG_VERSION = 1;
+static constexpr char FIRMWARE_VERSION[] = "2026.05.07.1";
+static constexpr char GITHUB_REPO_SLUG[] = "mr21free/freedom_clock_heltec_vme";
+static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme/releases";
+static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme/releases/latest";
 static constexpr char GITHUB_API_VERSION[] = "2022-11-28";
 static constexpr char MQTT_CLIENT_ID_PREFIX[] = "FreedomClock";
 static constexpr char AP_SSID_PREFIX[] = "Freedom_Clock_";
@@ -173,6 +221,7 @@ RTC_DATA_ATTR char lastBalanceBtc[VALUE_BUFFER_SIZE] = "--";
 RTC_DATA_ATTR time_t lastKnownUnixTime = 0;
 
 static constexpr uint16_t WEALTH_HISTORY_DAYS = 366;
+static constexpr uint8_t BATTERY_LOG_SAMPLES = 64;
 static constexpr int32_t WEALTH_HISTORY_EMPTY = INT32_MIN;
 static constexpr int32_t PRICE_HISTORY_EMPTY = INT32_MIN;
 static constexpr int64_t BALANCE_HISTORY_EMPTY = INT64_MIN;
@@ -184,10 +233,24 @@ RTC_DATA_ATTR time_t setupPinLockedUntil = 0;
 // ============================================================
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-EInkDisplay_VisionMasterE213 display;
+FreedomClockDisplay display;
 WebServer portalServer(CONFIG_PORTAL_PORT);
 DNSServer portalDnsServer;
 Preferences preferences;
+
+class TrustedWiFiClientSecure : public WiFiClientSecure {
+public:
+  bool useDefaultCertificateBundle() {
+#if defined(CONFIG_MBEDTLS_CERTIFICATE_BUNDLE)
+    attach_ssl_certificate_bundle(sslclient.get(), true);
+    _use_ca_bundle = true;
+    _use_insecure = false;
+    return true;
+#else
+    return false;
+#endif
+  }
+};
 
 static volatile bool gotPrice = false;
 static volatile bool gotBalance = false;
@@ -232,18 +295,6 @@ struct LifeStats {
   int remainingPercent;
 };
 
-struct DeviceStorageStats {
-  bool available;
-  size_t partitionBytes;
-  size_t totalEntries;
-  size_t usedEntries;
-  size_t freeEntries;
-  size_t namespaceCount;
-  size_t configEntries;
-  size_t historyEntries;
-  size_t otherEntries;
-};
-
 struct DisplayThemeColors {
   uint16_t foreground;
   uint16_t background;
@@ -259,6 +310,7 @@ struct DeviceConfig {
   float wealthGrowthAnnual;
   float defaultWealthUsd;
   float manualBtcAmount;
+  char manualBtcAmountText[MANUAL_BTC_TEXT_SIZE];
   float borrowFeeAnnual;
   uint8_t assetMode;
   uint8_t portfolioUseMode;
@@ -283,6 +335,17 @@ struct WealthHistory {
   int64_t dailyBalanceSats[WEALTH_HISTORY_DAYS];
 };
 
+struct BatteryLog {
+  uint32_t version;
+  uint32_t nextSampleId;
+  uint8_t count;
+  uint8_t nextIndex;
+  uint32_t sampleId[BATTERY_LOG_SAMPLES];
+  uint32_t unixTime[BATTERY_LOG_SAMPLES];
+  uint16_t millivolts[BATTERY_LOG_SAMPLES];
+  uint8_t percent[BATTERY_LOG_SAMPLES];
+};
+
 struct GitHubReleaseInfo {
   String tagName;
   String name;
@@ -294,6 +357,7 @@ struct GitHubReleaseInfo {
 
 static DeviceConfig deviceConfig = {};
 static WealthHistory wealthHistory = {};
+static BatteryLog batteryLog = {};
 
 enum SetupBootAction {
   SETUP_BOOT_ACTION_NONE = 0,
@@ -366,6 +430,13 @@ static void uppercaseAsciiInPlace(char* s) {
   if (!s) return;
   for (size_t i = 0; s[i] != '\0'; i++) {
     s[i] = (char)toupper((unsigned char)s[i]);
+  }
+}
+
+static void truncateCString(char* s, size_t maxChars) {
+  if (!s) return;
+  if (strlen(s) > maxChars) {
+    s[maxChars] = '\0';
   }
 }
 
@@ -480,15 +551,6 @@ static void formatSignedBtcDelta(int64_t deltaSats, char* dst, size_t dstSize) {
   snprintf(dst, dstSize, "%+.4f", btc);
 }
 
-static void formatStorageBytes(size_t bytes, char* dst, size_t dstSize) {
-  if (!dst || dstSize == 0) return;
-  if (bytes >= (1024U * 1024U)) {
-    snprintf(dst, dstSize, "%.2f MB", (double)bytes / (1024.0 * 1024.0));
-  } else {
-    snprintf(dst, dstSize, "%.1f KB", (double)bytes / 1024.0);
-  }
-}
-
 static void formatTrimmedBtcAmount(float btcValue, char* dst, size_t dstSize) {
   if (!dst || dstSize == 0) return;
   if (!(btcValue >= 0.0f)) {
@@ -506,51 +568,172 @@ static void formatTrimmedBtcAmount(float btcValue, char* dst, size_t dstSize) {
   }
 }
 
-static bool countNvsNamespaceEntries(const char* namespaceName, size_t& outEntries) {
-  outEntries = 0;
-  if (!namespaceName || namespaceName[0] == '\0') return false;
+static String formatDecimalInputValue(float value, uint8_t maxDecimals) {
+  if (!(value >= 0.0f)) value = 0.0f;
+  if (maxDecimals > 8) maxDecimals = 8;
 
-  nvs_handle_t handle = 0;
-  esp_err_t err = nvs_open(namespaceName, NVS_READONLY, &handle);
-  if (err == ESP_ERR_NVS_NOT_FOUND) {
-    return true;
+  uint8_t decimalsToUse = maxDecimals;
+  double factor = 1.0;
+  for (uint8_t decimals = 0; decimals <= maxDecimals; decimals++) {
+    const double rounded = round((double)value * factor) / factor;
+    if (fabs((double)value - rounded) <= 0.0000005) {
+      decimalsToUse = decimals;
+      break;
+    }
+    factor *= 10.0;
   }
-  if (err != ESP_OK) {
+
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%.*f", decimalsToUse, (double)value);
+  if (strchr(buf, '.')) {
+    char* end = buf + strlen(buf) - 1;
+    while (end > buf && *end == '0') {
+      *end = '\0';
+      end--;
+    }
+    if (end > buf && *end == '.') {
+      *end = '\0';
+    }
+  }
+  return String(buf);
+}
+
+static void normalizeDecimalInputText(
+  const String& rawValue,
+  char* dst,
+  size_t dstSize,
+  uint8_t maxDecimals,
+  const char* fallback
+) {
+  if (!dst || dstSize == 0) return;
+  if (maxDecimals > 8) maxDecimals = 8;
+
+  String cleaned;
+  cleaned.reserve(dstSize);
+  bool seenDot = false;
+  uint8_t decimals = 0;
+
+  for (size_t i = 0; i < rawValue.length() && cleaned.length() < dstSize - 1; i++) {
+    char c = rawValue.charAt(i);
+    if (c == ',') c = '.';
+    if (c >= '0' && c <= '9') {
+      if (seenDot) {
+        if (decimals >= maxDecimals) continue;
+        decimals++;
+      }
+      cleaned += c;
+    } else if (c == '.' && !seenDot) {
+      seenDot = true;
+      if (cleaned.length() == 0) cleaned += '0';
+      cleaned += '.';
+    }
+  }
+
+  while (cleaned.length() > 1 && cleaned.endsWith("0") && cleaned.indexOf('.') >= 0) {
+    cleaned.remove(cleaned.length() - 1);
+  }
+  if (cleaned.endsWith(".")) {
+    cleaned.remove(cleaned.length() - 1);
+  }
+  while (cleaned.length() > 1 && cleaned.charAt(0) == '0' && cleaned.charAt(1) != '.') {
+    cleaned.remove(0, 1);
+  }
+  if (cleaned.length() == 0) {
+    cleaned = fallback && fallback[0] ? fallback : "0";
+  }
+
+  safeCopyString(dst, dstSize, cleaned);
+}
+
+static void clearBatteryLogInMemory(BatteryLog& log) {
+  memset(&log, 0, sizeof(log));
+  log.version = BATTERY_LOG_VERSION;
+}
+
+static bool loadBatteryLog(BatteryLog& log) {
+  clearBatteryLogInMemory(log);
+
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, true)) {
     return false;
   }
 
-  err = nvs_get_used_entry_count(handle, &outEntries);
-  nvs_close(handle);
-  return err == ESP_OK;
+  const size_t storedSize = preferences.getBytesLength("log");
+  if (storedSize == sizeof(BatteryLog)) {
+    preferences.getBytes("log", &log, sizeof(BatteryLog));
+  }
+  preferences.end();
+
+  if (log.version != BATTERY_LOG_VERSION || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+    clearBatteryLogInMemory(log);
+    return false;
+  }
+  return true;
 }
 
-static DeviceStorageStats readDeviceStorageStats() {
-  DeviceStorageStats out = {};
-  const esp_partition_t* nvsPartition = esp_partition_find_first(
-    ESP_PARTITION_TYPE_DATA,
-    ESP_PARTITION_SUBTYPE_DATA_NVS,
-    nullptr
-  );
-  if (nvsPartition) {
-    out.partitionBytes = nvsPartition->size;
+static bool saveBatteryLog(const BatteryLog& log) {
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
+    return false;
+  }
+  const size_t written = preferences.putBytes("log", &log, sizeof(BatteryLog));
+  preferences.end();
+  return written == sizeof(BatteryLog);
+}
+
+static bool clearBatteryLog() {
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
+    return false;
+  }
+  const bool ok = preferences.clear();
+  preferences.end();
+  return ok;
+}
+
+static bool appendBatteryLogSample(BatteryLog& log, time_t now, float voltage, int percent) {
+  if (!(voltage > 0.0f)) return false;
+  if (log.version != BATTERY_LOG_VERSION || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+    clearBatteryLogInMemory(log);
   }
 
-  nvs_stats_t nvsStats = {};
-  if (nvs_get_stats(nullptr, &nvsStats) != ESP_OK) {
+  const uint8_t index = log.nextIndex;
+  log.nextSampleId++;
+  if (log.nextSampleId == 0) log.nextSampleId = 1;
+  log.sampleId[index] = log.nextSampleId;
+  log.unixTime[index] = (now >= 1700000000) ? (uint32_t)now : 0;
+  log.millivolts[index] = (uint16_t)clampInt((int)(voltage * 1000.0f + 0.5f), 0, 65535);
+  log.percent[index] = (uint8_t)clampInt(percent, 0, 100);
+
+  log.nextIndex = (uint8_t)((index + 1) % BATTERY_LOG_SAMPLES);
+  if (log.count < BATTERY_LOG_SAMPLES) log.count++;
+  return true;
+}
+
+static String buildBatteryLogText(const BatteryLog& log) {
+  String out;
+  out.reserve(2200);
+  out += "Battery calibration log\n";
+  out += "Format: sample, unix_time, voltage, percent\n";
+  out += "Newest sample is last.\n\n";
+
+  if (log.version != BATTERY_LOG_VERSION || log.count == 0 || log.count > BATTERY_LOG_SAMPLES) {
+    out += "No battery samples recorded yet.";
     return out;
   }
 
-  out.available = true;
-  out.totalEntries = nvsStats.total_entries;
-  out.usedEntries = nvsStats.used_entries;
-  out.freeEntries = nvsStats.free_entries;
-  out.namespaceCount = nvsStats.namespace_count;
-
-  countNvsNamespaceEntries(CONFIG_NAMESPACE, out.configEntries);
-  countNvsNamespaceEntries(HISTORY_NAMESPACE, out.historyEntries);
-
-  const size_t knownEntries = out.configEntries + out.historyEntries;
-  out.otherEntries = (out.usedEntries > knownEntries) ? (out.usedEntries - knownEntries) : 0;
+  const uint8_t firstIndex = (log.count == BATTERY_LOG_SAMPLES) ? log.nextIndex : 0;
+  for (uint8_t i = 0; i < log.count; i++) {
+    const uint8_t index = (uint8_t)((firstIndex + i) % BATTERY_LOG_SAMPLES);
+    char line[80];
+    snprintf(
+      line,
+      sizeof(line),
+      "#%lu, t=%lu, v=%.2fV, p=%u%%\n",
+      (unsigned long)log.sampleId[index],
+      (unsigned long)log.unixTime[index],
+      (double)log.millivolts[index] / 1000.0,
+      (unsigned int)log.percent[index]
+    );
+    out += line;
+  }
   return out;
 }
 
@@ -755,9 +938,9 @@ static bool maybeSeedTestWealthHistory(
   float currentPriceUsd,
   float currentBalanceBtc
 ) {
-#if FREEDOM_CLOCK_ENABLE_TEST_HISTORY
+#if ENABLE_TEST_HISTORY
   if (now <= 0) return false;
-  if (!FREEDOM_CLOCK_FORCE_TEST_HISTORY_RESEED && history.latestDay != 0) return false;
+  if (!FORCE_TEST_HISTORY_ON_EVERY_BOOT && history.latestDay != 0) return false;
 
   clearWealthHistoryInMemory(history);
   history.latestDay = (uint32_t)((uint64_t)now / 86400ULL);
@@ -969,9 +1152,21 @@ static void buildDeviceId(char* dst, size_t dstSize) {
 }
 
 static void buildPortalCredentials() {
+  static constexpr char PASSWORD_ALPHABET[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
   buildDeviceId(deviceId, sizeof(deviceId));
   snprintf(portalApSsid, sizeof(portalApSsid), "%s%s", AP_SSID_PREFIX, deviceId);
-  snprintf(portalApPassword, sizeof(portalApPassword), "%s%s", AP_PASSWORD_PREFIX, deviceId);
+
+  safeCopyCString(portalApPassword, sizeof(portalApPassword), AP_PASSWORD_PREFIX);
+  size_t pos = strlen(portalApPassword);
+  while (pos < (sizeof(portalApPassword) - 1)) {
+    uint32_t randomValue = esp_random();
+    for (uint8_t i = 0; i < 6 && pos < (sizeof(portalApPassword) - 1); i++) {
+      portalApPassword[pos++] = PASSWORD_ALPHABET[randomValue & 0x1FU];
+      randomValue >>= 5;
+    }
+  }
+  portalApPassword[pos] = '\0';
 }
 
 static void buildMqttClientId(char* dst, size_t dstSize) {
@@ -984,7 +1179,7 @@ static void buildMqttClientId(char* dst, size_t dstSize) {
 
 static int batteryPercentFromVoltage(float v) {
   static constexpr int NUM_POINTS = 8;
-  static constexpr float voltTable[NUM_POINTS] = { 3.20f, 3.30f, 3.60f, 3.75f, 3.85f, 3.95f, 4.05f, 4.15f };
+  static constexpr float voltTable[NUM_POINTS] = { 3.20f, 3.30f, 3.60f, 3.75f, 3.85f, 3.95f, 4.02f, 4.06f };
   static constexpr int socTable[NUM_POINTS] = { 0, 2, 25, 50, 70, 90, 97, 100 };
 
   if (v <= voltTable[0]) return socTable[0];
@@ -1012,13 +1207,20 @@ static float readBatteryVoltage() {
   delay(BATTERY_ADC_SETTLE_DELAY_MS);
 
   pinMode(PIN_BAT_ADC, INPUT);
-  int raw = analogRead(PIN_BAT_ADC);
+  analogReadResolution(12);
+  analogSetPinAttenuation(PIN_BAT_ADC, ADC_0db);
+
+  static constexpr uint8_t BATTERY_SAMPLE_COUNT = 12;
+  uint32_t millivoltsSum = 0;
+  for (uint8_t i = 0; i < BATTERY_SAMPLE_COUNT; i++) {
+    millivoltsSum += (uint32_t)analogReadMilliVolts(PIN_BAT_ADC);
+    delay(2);
+  }
 
   digitalWrite(PIN_ADC_CTRL, LOW);
 
-  float v_adc = (raw / ADC_MAX) * ADC_REF_V;
-  float v_batt = v_adc * VBAT_SCALE;
-  return v_batt;
+  const float adcVolts = ((float)millivoltsSum / (float)BATTERY_SAMPLE_COUNT) / 1000.0f;
+  return adcVolts * VBAT_SCALE;
 }
 
 static bool syncClockFromNtp(uint16_t timeout_ms = NTP_SYNC_TIMEOUT_MS) {
@@ -1031,6 +1233,35 @@ static bool syncClockFromNtp(uint16_t timeout_ms = NTP_SYNC_TIMEOUT_MS) {
     now = time(nullptr);
   }
   return now >= 1700000000;
+}
+
+static bool ensureClockReadyForTls(char* errorBuf, size_t errorBufSize) {
+  if (time(nullptr) >= 1700000000) {
+    if (errorBuf && errorBufSize > 0) errorBuf[0] = '\0';
+    return true;
+  }
+
+  if (syncClockFromNtp()) {
+    if (errorBuf && errorBufSize > 0) errorBuf[0] = '\0';
+    return true;
+  }
+
+  if (errorBuf && errorBufSize > 0) {
+    snprintf(errorBuf, errorBufSize, "Could not sync time for HTTPS certificate validation.");
+  }
+  return false;
+}
+
+static bool configureTrustedTlsClient(TrustedWiFiClientSecure& secureClient, char* errorBuf, size_t errorBufSize) {
+  if (secureClient.useDefaultCertificateBundle()) {
+    if (errorBuf && errorBufSize > 0) errorBuf[0] = '\0';
+    return true;
+  }
+
+  if (errorBuf && errorBufSize > 0) {
+    snprintf(errorBuf, errorBufSize, "TLS certificate bundle is not available in this board package.");
+  }
+  return false;
 }
 
 static time_t makeUtcDate(int year, int month, int day) {
@@ -1098,38 +1329,6 @@ static void refreshHardwareSecurityStatus() {
     ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS,
     nullptr
   ) != nullptr;
-}
-
-static bool hardwareSecurityIsFull() {
-  return hardwareFlashEncryptionReleaseMode && secureNvsActive && hardwareSecureBootActive;
-}
-
-static const char* hardwareSecurityLevelLabel() {
-  if (hardwareSecurityIsFull()) return "FULL";
-  if (hardwareFlashEncryptionActive || secureNvsActive || hardwareSecureBootActive) return "PARTIAL";
-  return "OPEN";
-}
-
-static String hardwareSecurityMessage() {
-  if (hardwareSecurityIsFull()) {
-    return "Hardware security is fully enabled: flash encryption, encrypted NVS, and secure boot are active.";
-  }
-  if (hardwareFlashEncryptionActive && !hardwareFlashEncryptionReleaseMode) {
-    return "Flash encryption is active in development mode. This is safer than open flash, but it is not production-grade yet.";
-  }
-  if (hardwareFlashEncryptionReleaseMode && secureNvsActive && !hardwareSecureBootActive) {
-    return "Stored settings are protected at rest, but secure boot is still off. A physical attacker could still replace the firmware.";
-  }
-  if (hardwareSecureBootActive && !hardwareFlashEncryptionActive) {
-    return "Secure boot is active, but flash storage is still readable. Stored settings are not protected at rest yet.";
-  }
-  if (hardwareFlashEncryptionActive && !secureNvsActive) {
-    if (hardwareNvsKeysPartitionPresent) {
-      return "Flash encryption is active, but encrypted NVS is not running. Stored settings are not fully hardened yet.";
-    }
-    return "Flash encryption is active, but the nvs_keys partition is missing, so encrypted NVS cannot start.";
-  }
-  return "Setup PIN slows casual access, but this board is not hardware-hardened yet. A physical attacker may still extract saved secrets.";
 }
 
 static esp_err_t reinitializePlainNvsStorage() {
@@ -1272,6 +1471,7 @@ static void normalizeDeviceConfig(DeviceConfig& cfg) {
     safeCopyCString(cfg.ownerName, sizeof(cfg.ownerName), DEFAULT_OWNER_NAME);
   }
   uppercaseAsciiInPlace(cfg.ownerName);
+  truncateCString(cfg.ownerName, OWNER_NAME_MAX_DISPLAY_CHARS);
 
   cfg.birthYear = clampInt(cfg.birthYear, 1900, 2100);
   cfg.lifeExpectancyYears = clampInt(cfg.lifeExpectancyYears, 1, 130);
@@ -1287,6 +1487,18 @@ static void normalizeDeviceConfig(DeviceConfig& cfg) {
   cfg.inflationAnnual = clampNonNegative(cfg.inflationAnnual);
   cfg.defaultWealthUsd = clampNonNegative(cfg.defaultWealthUsd);
   cfg.manualBtcAmount = clampNonNegative(cfg.manualBtcAmount);
+  if (!hasText(cfg.manualBtcAmountText)) {
+    safeCopyString(cfg.manualBtcAmountText, sizeof(cfg.manualBtcAmountText), formatDecimalInputValue(cfg.manualBtcAmount, 8));
+  } else {
+    normalizeDecimalInputText(
+      String(cfg.manualBtcAmountText),
+      cfg.manualBtcAmountText,
+      sizeof(cfg.manualBtcAmountText),
+      8,
+      DEFAULT_MANUAL_BTC_AMOUNT_TEXT
+    );
+    cfg.manualBtcAmount = clampNonNegative(strtof(cfg.manualBtcAmountText, nullptr));
+  }
   if (cfg.wealthGrowthAnnual < -0.99f) cfg.wealthGrowthAnnual = -0.99f;
   if (cfg.borrowFeeAnnual < -0.99f) cfg.borrowFeeAnnual = -0.99f;
 
@@ -1309,6 +1521,7 @@ static void applyDefaultDeviceConfig(DeviceConfig& cfg) {
   cfg.wealthGrowthAnnual = DEFAULT_WEALTH_GROWTH_ANNUAL;
   cfg.defaultWealthUsd = DEFAULT_WEALTH_USD;
   cfg.manualBtcAmount = DEFAULT_MANUAL_BTC_AMOUNT;
+  safeCopyCString(cfg.manualBtcAmountText, sizeof(cfg.manualBtcAmountText), DEFAULT_MANUAL_BTC_AMOUNT_TEXT);
   cfg.borrowFeeAnnual = DEFAULT_BORROW_FEE_ANNUAL;
   cfg.assetMode = (uint8_t)DEFAULT_ASSET_MODE;
   cfg.portfolioUseMode = (uint8_t)DEFAULT_PORTFOLIO_USE_MODE;
@@ -1322,7 +1535,7 @@ static void applyDefaultDeviceConfig(DeviceConfig& cfg) {
   safeCopyCString(cfg.topicPriceUsd, sizeof(cfg.topicPriceUsd), DEFAULT_TOPIC_PRICE_USD);
   safeCopyCString(cfg.topicBalanceBtc, sizeof(cfg.topicBalanceBtc), DEFAULT_TOPIC_BALANCE_BTC);
 
-#if FREEDOM_CLOCK_HAS_SECRETS && FREEDOM_CLOCK_USE_SECRETS_BOOTSTRAP
+#if HAS_SECRETS && USE_SECRETS_BOOTSTRAP
   safeCopyCString(cfg.wifiSsid, sizeof(cfg.wifiSsid), WIFI_SSID);
   safeCopyCString(cfg.wifiPass, sizeof(cfg.wifiPass), WIFI_PASS);
   safeCopyCString(cfg.mqttServer, sizeof(cfg.mqttServer), MQTT_SERVER);
@@ -1377,6 +1590,9 @@ static bool loadDeviceConfig(DeviceConfig& cfg) {
   cfg.wealthGrowthAnnual = preferences.getFloat("growth", cfg.wealthGrowthAnnual);
   cfg.defaultWealthUsd = preferences.getFloat("wealth", cfg.defaultWealthUsd);
   cfg.manualBtcAmount = preferences.getFloat("manbtc", cfg.manualBtcAmount);
+  if (preferences.getString("manbtctxt", cfg.manualBtcAmountText, sizeof(cfg.manualBtcAmountText)) == 0) {
+    cfg.manualBtcAmountText[0] = '\0';
+  }
   cfg.borrowFeeAnnual = preferences.getFloat("borrowfee", cfg.borrowFeeAnnual);
   cfg.assetMode = (uint8_t)preferences.getUInt("asset", cfg.assetMode);
   cfg.portfolioUseMode = (uint8_t)preferences.getUInt("usemode", cfg.portfolioUseMode);
@@ -1416,6 +1632,7 @@ static bool saveDeviceConfig(const DeviceConfig& cfg) {
   preferences.putFloat("growth", cfg.wealthGrowthAnnual);
   preferences.putFloat("wealth", cfg.defaultWealthUsd);
   preferences.putFloat("manbtc", cfg.manualBtcAmount);
+  preferences.putString("manbtctxt", cfg.manualBtcAmountText);
   preferences.putFloat("borrowfee", cfg.borrowFeeAnnual);
   preferences.putUInt("asset", (uint32_t)cfg.assetMode);
   preferences.putUInt("usemode", (uint32_t)cfg.portfolioUseMode);
@@ -1673,6 +1890,7 @@ static String buildPortalConfirmationPage(const char* title, const char* message
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<title>Freedom Clock Setup</title>";
   html += "<style>";
+  html += "html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}";
   html += "body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;font-family:Arial,sans-serif;background:#f3f0e8;color:#171717;}";
   html += ".panel{width:min(520px,100%);background:#fff;border-radius:22px;padding:28px;box-shadow:0 18px 40px rgba(18,18,18,.12);text-align:center;}";
   html += "h1{margin:0 0 12px;font-size:30px;}";
@@ -1689,21 +1907,19 @@ static String buildPortalConfirmationPage(const char* title, const char* message
 
 static String buildPortalUnlockPage(const char* statusMessage = nullptr, bool isError = false) {
   const uint32_t remainingSeconds = setupPinLockRemainingSeconds();
-  const String securityMessage = hardwareSecurityMessage();
   String html;
-  html.reserve(6200);
+  html.reserve(4800);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<title>Freedom Clock Setup Locked</title>";
   html += "<style>";
+  html += "html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}";
   html += "body{margin:0;min-height:100vh;font-family:Arial,sans-serif;background:#f3f0e8;color:#171717;}";
   html += ".wrap{max-width:560px;margin:0 auto;padding:24px 18px 48px;}";
   html += ".hero{background:#f7931a;color:#2b1700;padding:24px;border-radius:18px;box-shadow:0 14px 40px rgba(120,64,0,.18);}";
   html += ".hero h1{margin:0 0 8px;font-size:30px;}";
   html += ".hero p{margin:0;line-height:1.5;color:#5b3300;}";
-  html += ".meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;}";
-  html += ".pill{background:#f7931a;padding:8px 12px;border-radius:999px;font-size:13px;color:#2b1700;}";
   html += ".card{margin-top:22px;background:#fff;border-radius:18px;padding:20px;box-shadow:0 12px 30px rgba(18,18,18,.08);}";
   html += "label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#3a342d;}";
   html += "input{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:18px;background:#fdfbf6;color:#171717;letter-spacing:.18em;text-align:center;}";
@@ -1713,23 +1929,13 @@ static String buildPortalUnlockPage(const char* statusMessage = nullptr, bool is
   html += ".err{background:#fdeaea;color:#8d2020;}";
   html += ".info{background:#eee7db;color:#5c5349;}";
   html += ".actions{display:flex;gap:12px;align-items:center;margin-top:16px;}";
-  html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;}";
+  html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:16px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;touch-action:manipulation;}";
   html += "button[disabled],input[disabled]{opacity:.45;cursor:not-allowed;}";
   html += "@media (max-width:640px){.hero h1{font-size:25px;}}";
   html += "</style></head><body><div class=\"wrap\">";
   html += "<section class=\"hero\"><h1>Freedom Clock Setup</h1>";
   html += "<p>Setup access is protected by a 6-digit PIN. Enter it to view or change saved settings. The normal clock screens stay unlocked.</p>";
-  html += "<div class=\"meta\">";
-  html += String("<div class=\"pill\">Device ID: ") + htmlEscape(deviceId) + "</div>";
-  html += String("<div class=\"pill\">Setup Wi-Fi: ") + htmlEscape(portalApSsid) + "</div>";
-  html += String("<div class=\"pill\">Security: ") + hardwareSecurityLevelLabel() + "</div>";
-  html += "<div class=\"pill\">Portal: http://192.168.4.1</div>";
-  html += "</div></section>";
-  html += "<div class=\"message ";
-  html += hardwareSecurityIsFull() ? "ok" : "info";
-  html += "\">";
-  html += htmlEscape(securityMessage.c_str());
-  html += "</div>";
+  html += "</section>";
 
   if (remainingSeconds > 0) {
     html += "<div class=\"message err\">";
@@ -1746,14 +1952,14 @@ static String buildPortalUnlockPage(const char* statusMessage = nullptr, bool is
   }
 
   html += "<section class=\"card\"><form method=\"post\" action=\"/unlock\">";
-  html += "<label for=\"setup_pin_unlock\">Setup PIN</label>";
+  html += "<label for=\"setup_pin_unlock\">Enter your PIN</label>";
   html += "<input id=\"setup_pin_unlock\" name=\"setup_pin_unlock\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" autocomplete=\"one-time-code\"";
   if (remainingSeconds > 0) html += " disabled";
   html += ">";
   html += "<div class=\"hint\">After wrong attempts, the wait grows. A 10-second factory reset still clears the PIN and all saved settings.</div>";
   html += "<div class=\"actions\"><button type=\"submit\"";
   if (remainingSeconds > 0) html += " disabled";
-  html += ">Unlock setup</button></div>";
+  html += ">Unlock</button></div>";
   html += "</form></section>";
   if (remainingSeconds > 0) {
     html += "<script>";
@@ -1775,41 +1981,39 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   const bool hasSavedWifiPassword = hasText(cfg.wifiPass);
   const bool hasSavedMqttPassword = hasText(cfg.mqttPass);
   const bool hasExistingSetupPin = hasSetupPinConfigured(cfg);
-  const String securityMessage = hardwareSecurityMessage();
   const char* previewPriceText = (gotPrice && hasText(priceUsdBuf)) ? priceUsdBuf : lastPriceUsd;
   const char* previewBalanceText = (gotBalance && hasText(balanceBtcBuf)) ? balanceBtcBuf : lastBalanceBtc;
   float previewPriceUsd = 0.0f;
   float previewBalanceBtc = 0.0f;
   const bool previewHasPriceUsd = parseNonNegativeFloatStrict(previewPriceText, previewPriceUsd, false);
   const bool previewHasBalanceBtc = parseNonNegativeFloatStrict(previewBalanceText, previewBalanceBtc, true);
-  const DeviceStorageStats storageStats = readDeviceStorageStats();
-  char nvsPartitionSize[20];
-  formatStorageBytes(storageStats.partitionBytes, nvsPartitionSize, sizeof(nvsPartitionSize));
+  const String batteryLogText = buildBatteryLogText(batteryLog);
   html.reserve(40200);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
   html += "<title>Freedom Clock Setup</title>";
   html += "<style>";
+  html += "html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}";
   html += "body{margin:0;font-family:Arial,sans-serif;background:#f3f0e8;color:#171717;}";
   html += ".wrap{max-width:860px;margin:0 auto;padding:24px 18px 48px;}";
   html += ".hero{background:#f7931a;color:#2b1700;padding:24px;border-radius:18px;box-shadow:0 14px 40px rgba(120,64,0,.18);}";
   html += ".hero h1{margin:0 0 8px;font-size:30px;letter-spacing:.02em;}";
   html += ".hero p{margin:0;line-height:1.5;color:#5b3300;}";
   html += ".meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;}";
-  html += ".pill{background:#f7931a;padding:8px 12px;border-radius:999px;font-size:13px;color:#2b1700;}";
+  html += ".pill{background:transparent;padding:0;border-radius:0;font-size:13px;color:#2b1700;}";
   html += "form{margin-top:22px;display:grid;gap:18px;}";
   html += ".card{background:#fff;border-radius:18px;padding:18px;box-shadow:0 12px 30px rgba(18,18,18,.08);}";
   html += ".card h2{margin:0 0 14px;font-size:18px;}";
   html += ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;}";
-  html += ".hidden{display:none;}";
+  html += ".hidden{display:none!important;}";
   html += ".stack{display:grid;gap:10px;}";
   html += ".inline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}";
   html += ".dual{display:grid;grid-template-columns:minmax(120px,1fr) 150px;gap:10px;align-items:end;}";
   html += ".check{display:flex;align-items:center;gap:8px;font-size:13px;color:#3a342d;margin-top:8px;}";
   html += ".check input{width:auto;margin:0;}";
   html += "label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#3a342d;}";
-  html += "input,select{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:15px;background:#fdfbf6;color:#171717;}";
+  html += "input,select{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;background:#fdfbf6;color:#171717;}";
   html += "input[type=password]{letter-spacing:.08em;}";
   html += ".hint{font-size:12px;color:#6b6258;margin-top:6px;line-height:1.45;}";
   html += ".message{padding:14px 16px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-line;}";
@@ -1820,15 +2024,6 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".preview-card h2{color:#fff7ec;}";
   html += ".preview-value{font-size:34px;font-weight:800;letter-spacing:.03em;line-height:1.05;}";
   html += ".preview-hint{font-size:13px;color:#f7d9ad;line-height:1.45;margin-top:10px;}";
-  html += ".storage-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:10px;font-size:14px;}";
-  html += ".storage-head strong{font-weight:800;}";
-  html += ".storage-bar{display:flex;height:22px;overflow:hidden;border-radius:5px;background:#ded4c2;margin:8px 0 10px;}";
-  html += ".storage-segment{display:block;min-width:1px;height:100%;}";
-  html += ".storage-config{background:#ff4b3e;}";
-  html += ".storage-history{background:#f7931a;}";
-  html += ".storage-other{background:#9b958d;}";
-  html += ".storage-free{background:#eadfcd;}";
-  html += ".storage-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:#645c53;}";
   html += ".dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;}";
   html += ".releasebox{display:grid;gap:10px;margin-top:14px;padding:14px 16px;border-radius:14px;background:#f8f4ec;border:1px solid #e5dbc9;}";
   html += ".releasebox .row{font-size:14px;color:#2f2924;}";
@@ -1837,29 +2032,25 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".copyline{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;margin-top:10px;}";
   html += ".copytext{box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid #d8cdbb;border-radius:12px;background:#fdfbf6;color:#2f2924;font-size:13px;overflow-wrap:anywhere;}";
   html += ".actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}";
-  html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:15px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;}";
-  html += "button.small{padding:10px 14px;font-size:13px;}";
+  html += ".form-actions{margin-top:4px;}";
+  html += ".firmware-head{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap;}";
+  html += ".firmware-version{font-size:20px;font-weight:800;color:#171717;}";
+  html += ".firmware-model{font-size:13px;color:#645c53;margin-top:4px;}";
+  html += "textarea{width:100%;box-sizing:border-box;min-height:180px;padding:11px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;background:#fdfbf6;color:#171717;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.45;}";
+  html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:16px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;touch-action:manipulation;}";
+  html += "button.small{padding:10px 14px;font-size:16px;}";
   html += "button.secondary{background:#ded4c2;color:#211d19;}";
   html += "button[disabled]{opacity:.45;cursor:not-allowed;}";
   html += "a.extlink{color:#8b4f00;font-weight:700;text-decoration:none;}";
   html += "a.extlink:hover,a.extlink:focus{text-decoration:underline;}";
   html += ".subtle{font-size:13px;color:#645c53;}";
   html += "@media (max-width:640px){.hero h1{font-size:25px;}}";
-  html += "</style></head><body><div class=\"wrap\">";
+  html += "</style></head><body><div id=\"focus_guard\" tabindex=\"-1\" aria-hidden=\"true\" style=\"position:fixed;top:0;left:0;width:1px;height:1px;outline:none;\"></div><div class=\"wrap\">";
   html += "<section class=\"hero\"><h1>Freedom Clock Setup</h1>";
-  html += "<p>Configure this device once, save locally, and it will boot straight into clock mode on future wakeups. Hold the 21 / GPIO21 button while waking the device. Release after about 3 seconds to reopen setup, or keep holding for about 10 seconds to clear saved settings and start fresh.</p>";
+  html += "<p>Hold 21 button for about 5 seconds to enter setup mode, or keep holding the button for about 10 seconds to clear all settings (factory reset).</p>";
   html += "<div class=\"meta\">";
   html += String("<div class=\"pill\">Device ID: ") + htmlEscape(deviceId) + "</div>";
-  html += String("<div class=\"pill\">Setup Wi-Fi: ") + htmlEscape(portalApSsid) + "</div>";
-  html += String("<div class=\"pill\">Firmware: ") + FIRMWARE_VERSION + "</div>";
-  html += String("<div class=\"pill\">Security: ") + hardwareSecurityLevelLabel() + "</div>";
-  html += "<div class=\"pill\">Portal: http://192.168.4.1</div>";
   html += "</div></section>";
-  html += "<div class=\"message ";
-  html += hardwareSecurityIsFull() ? "ok" : "info";
-  html += "\" style=\"margin-top:18px;\">";
-  html += htmlEscape(securityMessage.c_str());
-  html += "</div>";
 
   if (statusMessage && statusMessage[0] != '\0') {
     html += "<div class=\"message ";
@@ -1869,30 +2060,30 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
     html += "</div>";
   }
 
-  html += "<form id=\"config_form\" method=\"post\" action=\"/save\">";
+  html += "<form id=\"config_form\" method=\"post\" action=\"/save\" autocomplete=\"off\">";
 
   html += "<section class=\"card\"><h2>Owner</h2><div class=\"grid\">";
-  html += String("<div><label for=\"owner_name\">Owner name</label><input id=\"owner_name\" name=\"owner_name\" maxlength=\"23\" autocapitalize=\"characters\" autocorrect=\"off\" spellcheck=\"false\" value=\"") + htmlEscape(cfg.ownerName) + "\"><div class=\"hint\">Used on the e-ink title line. Saved in uppercase.</div></div>";
-  html += String("<div><label for=\"birth_year\">Birth year</label><input id=\"birth_year\" name=\"birth_year\" type=\"number\" min=\"1900\" max=\"2100\" value=\"") + String(cfg.birthYear) + "\"></div>";
-  html += String("<div><label for=\"life_expectancy_years\">Life expectancy (years)</label><input id=\"life_expectancy_years\" name=\"life_expectancy_years\" type=\"number\" min=\"1\" max=\"130\" value=\"") + String(cfg.lifeExpectancyYears) + "\"></div>";
+  html += String("<div><label for=\"owner_name\">Owner name</label><input id=\"owner_name\" name=\"owner_name\" maxlength=\"") + String(OWNER_NAME_MAX_DISPLAY_CHARS) + "\" autocomplete=\"off\" autocapitalize=\"characters\" autocorrect=\"off\" spellcheck=\"false\" value=\"" + htmlEscape(cfg.ownerName) + "\"></div>";
+  html += String("<div><label for=\"birth_year\">Birth year</label><input id=\"birth_year\" name=\"birth_year\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"1900\" max=\"2100\" autocomplete=\"off\" value=\"") + String(cfg.birthYear) + "\"></div>";
+  html += String("<div><label for=\"life_expectancy_years\">Life expectancy (years)</label><input id=\"life_expectancy_years\" name=\"life_expectancy_years\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"1\" max=\"130\" autocomplete=\"off\" value=\"") + String(cfg.lifeExpectancyYears) + "\"></div>";
   html += "</div></section>";
 
-  html += "<section class=\"card\"><h2>Portfolio + Model</h2><div class=\"grid\">";
+  html += "<section class=\"card\"><h2>Portfolio &amp; Model</h2><div class=\"grid\">";
   html += "<div><label for=\"asset_mode\">Asset mode</label><select id=\"asset_mode\" name=\"asset_mode\">";
   html += String("<option value=\"2\"") + selectedAttr(sanitizeAssetMode(cfg.assetMode) == ASSET_MODE_BTC_MANUAL) + ">Static BTC + price online</option>";
   html += String("<option value=\"0\"") + selectedAttr(sanitizeAssetMode(cfg.assetMode) == ASSET_MODE_BTC) + ">BTC via MQTT</option>";
   html += String("<option value=\"1\"") + selectedAttr(sanitizeAssetMode(cfg.assetMode) == ASSET_MODE_WEALTH) + ">Static net worth</option>";
   html += "</select></div>";
-  html += String("<div id=\"manual_btc_field_wrap\"><label for=\"manual_btc_amount\">Static BTC amount</label><input id=\"manual_btc_amount\" name=\"manual_btc_amount\" type=\"number\" min=\"0.00000001\" step=\"0.00000001\" value=\"") + formatFloatForInput(cfg.manualBtcAmount, 8) + "\"><div class=\"hint\">Used only in static BTC mode. BTC/USD price is fetched from CoinGecko over the internet.</div></div>";
-  html += "<div><label for=\"portfolio_use_mode\">Withdrawal mode</label><select id=\"portfolio_use_mode\" name=\"portfolio_use_mode\">";
+  html += String("<div id=\"manual_btc_field_wrap\"><label for=\"manual_btc_amount\">Static BTC amount</label><input id=\"manual_btc_amount\" name=\"manual_btc_amount\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" min=\"0.00000001\" step=\"0.00000001\" autocomplete=\"off\" value=\"") + htmlEscape(cfg.manualBtcAmountText) + "\"><div class=\"hint\">BTC/USD price is fetched from CoinGecko over the internet.</div></div>";
+  html += "<div><label for=\"portfolio_use_mode\">Spend mode</label><select id=\"portfolio_use_mode\" name=\"portfolio_use_mode\">";
   html += String("<option value=\"0\"") + selectedAttr(sanitizePortfolioUseMode(cfg.portfolioUseMode) == PORTFOLIO_USE_MODE_SELL) + ">Sell monthly</option>";
   html += String("<option value=\"1\"") + selectedAttr(sanitizePortfolioUseMode(cfg.portfolioUseMode) == PORTFOLIO_USE_MODE_BORROW) + ">Borrow yearly</option>";
   html += "</select></div>";
-  html += String("<div id=\"wealth_field_wrap\"><label for=\"default_wealth_usd\">Static wealth USD</label><input id=\"default_wealth_usd\" name=\"default_wealth_usd\" type=\"number\" min=\"0\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.defaultWealthUsd, 2) + "\"><div class=\"hint\">Used only in static net worth mode.</div></div>";
-  html += String("<div><label for=\"monthly_exp_usd\">Monthly expenses USD</label><input id=\"monthly_exp_usd\" name=\"monthly_exp_usd\" type=\"number\" min=\"0\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.monthlyExpUsd, 2) + "\"></div>";
-  html += String("<div><label for=\"inflation_annual_pct\">Inflation % / year</label><input id=\"inflation_annual_pct\" name=\"inflation_annual_pct\" type=\"number\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.inflationAnnual * 100.0f, 2) + "\"></div>";
-  html += String("<div><label for=\"wealth_growth_annual_pct\">Portfolio growth % / year</label><input id=\"wealth_growth_annual_pct\" name=\"wealth_growth_annual_pct\" type=\"number\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.wealthGrowthAnnual * 100.0f, 2) + "\"></div>";
-  html += String("<div id=\"borrow_fee_wrap\"><label for=\"borrow_fee_annual_pct\">Borrow fee % / year</label><input id=\"borrow_fee_annual_pct\" name=\"borrow_fee_annual_pct\" type=\"number\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.borrowFeeAnnual * 100.0f, 2) + "\"></div>";
+  html += String("<div id=\"wealth_field_wrap\"><label for=\"default_wealth_usd\">Static wealth USD</label><input id=\"default_wealth_usd\" name=\"default_wealth_usd\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" min=\"0\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.defaultWealthUsd, 2) + "\"><div class=\"hint\">Used only in static net worth mode.</div></div>";
+  html += String("<div><label for=\"monthly_exp_usd\">Monthly expenses USD</label><input id=\"monthly_exp_usd\" name=\"monthly_exp_usd\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"0\" step=\"1\" autocomplete=\"off\" value=\"") + String((int)(cfg.monthlyExpUsd + 0.5f)) + "\"></div>";
+  html += String("<div><label for=\"inflation_annual_pct\">Inflation % / year</label><input id=\"inflation_annual_pct\" name=\"inflation_annual_pct\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.inflationAnnual * 100.0f, 2) + "\"></div>";
+  html += String("<div><label for=\"wealth_growth_annual_pct\">Portfolio growth % / year</label><input id=\"wealth_growth_annual_pct\" name=\"wealth_growth_annual_pct\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.wealthGrowthAnnual * 100.0f, 2) + "\"></div>";
+  html += String("<div id=\"borrow_fee_wrap\"><label for=\"borrow_fee_annual_pct\">Borrow fee % / year</label><input id=\"borrow_fee_annual_pct\" name=\"borrow_fee_annual_pct\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.borrowFeeAnnual * 100.0f, 2) + "\"></div>";
   html += "</div></section>";
 
   html += "<section class=\"card preview-card\"><h2>Freedom Time Preview</h2>";
@@ -1900,57 +2091,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<div id=\"freedom_preview_hint\" class=\"preview-hint\">Change the values above to preview the result before saving.</div>";
   html += "</section>";
 
-  html += "<section class=\"card\"><h2>Device Storage</h2>";
-  if (storageStats.available && storageStats.totalEntries > 0) {
-    const float totalEntries = (float)storageStats.totalEntries;
-    const float configPct = ((float)storageStats.configEntries / totalEntries) * 100.0f;
-    const float historyPct = ((float)storageStats.historyEntries / totalEntries) * 100.0f;
-    const float otherPct = ((float)storageStats.otherEntries / totalEntries) * 100.0f;
-    const float freePct = ((float)storageStats.freeEntries / totalEntries) * 100.0f;
-    html += "<div class=\"storage-head\"><span>NVS / Preferences</span><strong>";
-    html += String(storageStats.usedEntries);
-    html += " of ";
-    html += String(storageStats.totalEntries);
-    html += " entries used</strong></div>";
-    html += "<div class=\"storage-bar\" aria-label=\"Device storage usage\">";
-    html += "<span class=\"storage-segment storage-config\" style=\"width:";
-    html += String(configPct, 2);
-    html += "%\"></span>";
-    html += "<span class=\"storage-segment storage-history\" style=\"width:";
-    html += String(historyPct, 2);
-    html += "%\"></span>";
-    html += "<span class=\"storage-segment storage-other\" style=\"width:";
-    html += String(otherPct, 2);
-    html += "%\"></span>";
-    html += "<span class=\"storage-segment storage-free\" style=\"width:";
-    html += String(freePct, 2);
-    html += "%\"></span></div>";
-    html += "<div class=\"storage-legend\">";
-    html += "<span><i class=\"dot storage-config\"></i>Config ";
-    html += String(storageStats.configEntries);
-    html += "</span><span><i class=\"dot storage-history\"></i>History ";
-    html += String(storageStats.historyEntries);
-    html += "</span><span><i class=\"dot storage-other\"></i>Other ";
-    html += String(storageStats.otherEntries);
-    html += "</span><span><i class=\"dot storage-free\"></i>Free ";
-    html += String(storageStats.freeEntries);
-    html += "</span></div>";
-    html += "<div class=\"hint\">Daily stats are stored in the History segment. Current history capacity is ";
-    html += String(WEALTH_HISTORY_DAYS);
-    html += " daily records. NVS partition size: ";
-    html += nvsPartitionSize;
-    html += ".</div>";
-  } else {
-    html += "<div class=\"message info\">Storage usage is not available right now.</div>";
-  }
-  html += "</section>";
-
   html += "<section class=\"card\"><h2>Display</h2><div class=\"grid\">";
   html += "<div><label for=\"display_theme_mode\">Display theme</label><select id=\"display_theme_mode\" name=\"display_theme_mode\">";
   html += String("<option value=\"1\"") + selectedAttr(sanitizeThemeMode(cfg.displayThemeMode) == DISPLAY_THEME_DARK) + ">Dark</option>";
   html += String("<option value=\"0\"") + selectedAttr(sanitizeThemeMode(cfg.displayThemeMode) == DISPLAY_THEME_LIGHT) + ">Light</option>";
   html += "</select></div>";
-  html += String("<div><label for=\"refresh_interval_value\">Refresh every</label><div class=\"dual\"><input id=\"refresh_interval_value\" name=\"refresh_interval_value\" type=\"number\" min=\"1\" step=\"1\" value=\"") + String(refreshValue) + "\"><select id=\"refresh_interval_unit\" name=\"refresh_interval_unit\"><option value=\"0\"" + selectedAttr(refreshUnit == REFRESH_INTERVAL_UNIT_MINUTES) + ">Minutes</option><option value=\"1\"" + selectedAttr(refreshUnit == REFRESH_INTERVAL_UNIT_HOURS) + ">Hours</option><option value=\"2\"" + selectedAttr(refreshUnit == REFRESH_INTERVAL_UNIT_DAYS) + ">Days</option></select></div><div id=\"refresh_interval_hint\" class=\"hint\">Default is 1 day. Shorter intervals use more battery.</div></div>";
+  html += String("<div><label for=\"refresh_interval_value\">Refresh every</label><div class=\"dual\"><input id=\"refresh_interval_value\" name=\"refresh_interval_value\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"1\" step=\"1\" value=\"") + String(refreshValue) + "\"><select id=\"refresh_interval_unit\" name=\"refresh_interval_unit\"><option value=\"0\"" + selectedAttr(refreshUnit == REFRESH_INTERVAL_UNIT_MINUTES) + ">Minutes</option><option value=\"1\"" + selectedAttr(refreshUnit == REFRESH_INTERVAL_UNIT_HOURS) + ">Hours</option><option value=\"2\"" + selectedAttr(refreshUnit == REFRESH_INTERVAL_UNIT_DAYS) + ">Days</option></select></div><div id=\"refresh_interval_hint\" class=\"hint\">Default is 1 day. Shorter intervals use more battery.</div></div>";
   html += "</div></section>";
 
   html += "<section class=\"card\"><h2>Setup Security</h2><div class=\"grid\">";
@@ -1968,7 +2114,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
 
   html += "<section class=\"card\"><h2>Wi-Fi</h2>";
   html += "<div class=\"stack\">";
-  html += "<div class=\"stack\"><div><label for=\"wifi_ssid_select\">Available Wi-Fi</label><div class=\"inline\"><select id=\"wifi_ssid_select\"><option value=\"\">Loading nearby networks...</option></select><button id=\"scan_wifi_button\" class=\"secondary\" type=\"button\">Refresh Wi-Fi List</button></div></div><div class=\"hint\">Choose a scanned Wi-Fi name here, or type one manually below for hidden networks. In static net worth mode, Wi-Fi is optional, but recommended because without time sync the lifetime and coverage calculations can become less accurate. Static BTC mode uses Wi-Fi to fetch the BTC/USD price from CoinGecko.</div></div>";
+  html += "<div class=\"stack\"><div><label for=\"wifi_ssid_select\">Available Wi-Fi</label><div class=\"inline\"><select id=\"wifi_ssid_select\"><option value=\"\">Loading nearby networks...</option></select><button id=\"scan_wifi_button\" class=\"secondary\" type=\"button\">Refresh Wi-Fi List</button></div></div><div class=\"hint\">Choose a scanned Wi-Fi name here, or type one manually below for hidden networks.</div></div>";
   html += "<div class=\"grid\">";
   html += String("<div><label for=\"wifi_ssid\">Wi-Fi SSID</label><input id=\"wifi_ssid\" name=\"wifi_ssid\" maxlength=\"32\" value=\"") + htmlEscape(cfg.wifiSsid) + "\"></div>";
   html += "<div><label for=\"wifi_pass\">Wi-Fi password</label><input id=\"wifi_pass\" name=\"wifi_pass\" type=\"password\" maxlength=\"64\"";
@@ -1986,7 +2132,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
 
   html += "<section id=\"mqtt_card\" class=\"card\"><h2>MQTT For BTC Mode</h2><div class=\"grid\">";
   html += String("<div><label for=\"mqtt_server\">MQTT server</label><input id=\"mqtt_server\" name=\"mqtt_server\" maxlength=\"63\" value=\"") + htmlEscape(cfg.mqttServer) + "\"></div>";
-  html += String("<div><label for=\"mqtt_port\">MQTT port</label><input id=\"mqtt_port\" name=\"mqtt_port\" type=\"number\" min=\"1\" max=\"65535\" value=\"") + String(cfg.mqttPort) + "\"></div>";
+  html += String("<div><label for=\"mqtt_port\">MQTT port</label><input id=\"mqtt_port\" name=\"mqtt_port\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"1\" max=\"65535\" value=\"") + String(cfg.mqttPort) + "\"></div>";
   html += String("<div><label for=\"mqtt_user\">MQTT username</label><input id=\"mqtt_user\" name=\"mqtt_user\" maxlength=\"63\" value=\"") + htmlEscape(cfg.mqttUser) + "\"></div>";
   html += "<div><label for=\"mqtt_pass\">MQTT password</label><input id=\"mqtt_pass\" name=\"mqtt_pass\" type=\"password\" maxlength=\"63\"";
   if (hasSavedMqttPassword) html += " placeholder=\"Saved password kept unless replaced\"";
@@ -2001,45 +2147,43 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "</div>";
   html += String("<div><label for=\"topic_price_usd\">BTC price topic</label><input id=\"topic_price_usd\" name=\"topic_price_usd\" maxlength=\"95\" value=\"") + htmlEscape(cfg.topicPriceUsd) + "\"></div>";
   html += String("<div><label for=\"topic_balance_btc\">BTC balance topic</label><input id=\"topic_balance_btc\" name=\"topic_balance_btc\" maxlength=\"95\" value=\"") + htmlEscape(cfg.topicBalanceBtc) + "\"></div>";
-  html += "</div><div class=\"hint\">These MQTT values are only required when the asset mode is set to BTC via MQTT. Everything stays local to the device and your local network. Changing the BTC broker or BTC topics resets historical stats on save.</div></section>";
-
-  html += "<section class=\"card\"><h2>Validate Before Save</h2>";
-  html += "<div class=\"actions\"><button id=\"validate_button\" type=\"button\">Test Connection</button><button id=\"save_button\" type=\"submit\" disabled>Save</button></div>";
-  html += "<div id=\"validation_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
-  html += "<div class=\"hint\">Save stays locked until the current form passes validation. In static net worth mode, Wi-Fi is optional. In BTC via MQTT mode, validation checks Wi-Fi, MQTT login, both topics, and whether both payloads are valid numbers. In static BTC mode, validation checks Wi-Fi, your static BTC amount, and a live BTC/USD price fetch from CoinGecko. Switching between asset modes resets historical stats on save.</div>";
-  html += "</section>";
+  html += "</div></section>";
+  html += "<div class=\"actions form-actions\"><button id=\"validate_button\" type=\"button\">Test Connection</button><button id=\"save_button\" type=\"submit\" disabled>Save</button></div>";
+  html += "<div id=\"validation_status\" class=\"message info\" style=\"display:none;\"></div>";
   html += "</form>";
+
+  html += "<section class=\"card\" style=\"margin-top:16px;\"><h2>Battery Calibration Log</h2>";
+  html += "<div class=\"hint\">Each wake records measured battery voltage and the percent shown by the device. Copy this log when we need to tune the battery curve.</div>";
+  html += "<textarea id=\"battery_log_text\" readonly>";
+  html += htmlEscape(batteryLogText.c_str());
+  html += "</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_battery_log_button\" class=\"secondary\" type=\"button\">Copy Battery Log</button></div>";
+  html += "<div id=\"battery_log_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+  html += "</section>";
+
   html += "<section class=\"card\" style=\"margin-top:16px;\"><h2>Firmware Update</h2>";
-  html += "<form id=\"firmware_form\" method=\"post\" action=\"/firmware\" enctype=\"multipart/form-data\">";
-  html += "<div class=\"grid\">";
-  html += "<div><label for=\"firmware_file\">Firmware .bin file</label><input id=\"firmware_file\" name=\"firmware_file\" type=\"file\" accept=\".bin,application/octet-stream\"></div>";
-  html += "</div>";
-  html += String("<div class=\"hint\">Current firmware: ") + FIRMWARE_VERSION + ". Upload a Freedom Clock application .bin file here to update the device locally. Saved settings stay on the device. ";
-  html += hardwareSecureBootActive
-    ? "Use signed Freedom Clock firmware files for production-hardened devices."
-    : "This works well for manual local updates during development and for future public release packages.";
-  html += " ";
-  html += hardwareSecureBootActive
-    ? "For this device, choose the secure package."
-    : "For this device, choose the open package.";
-  html += " Need the newest .bin file? Use this URL outside the captive Wi-Fi browser:";
-  html += "<div class=\"copyline\"><div id=\"releases_url_text\" class=\"copytext\">";
-  html += GITHUB_RELEASES_URL;
-  html += "</div><button id=\"copy_releases_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
-  html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_upload_button\" type=\"submit\">Upload Firmware</button><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check Latest Release</button></div>";
-  html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+  html += "<div class=\"firmware-head\"><div><label>Current firmware</label><div class=\"firmware-version\">";
+  html += FIRMWARE_VERSION;
+  html += "</div><div class=\"firmware-model\">Device: ";
+  html += DEVICE_MODEL_NAME;
+  html += "</div></div><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check for Update</button></div>";
   html += "<div id=\"release_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
   html += "<div id=\"release_summary\" class=\"releasebox hidden\">";
-  html += String("<div class=\"row\"><strong>Current firmware:</strong> ") + FIRMWARE_VERSION + "</div>";
-  html += "<div class=\"row\"><strong>Latest published release:</strong> <span id=\"release_latest_version\">--</span></div>";
-  html += "<div class=\"row\"><strong>Release title:</strong> <span id=\"release_name\">--</span></div>";
-  html += "<div class=\"row\"><strong>Package for this device:</strong> <span id=\"release_package\">--</span></div>";
-  html += "<div class=\"row\"><strong>Changes and improvements:</strong></div>";
+  html += "<div class=\"row\"><strong>Latest release:</strong> <span id=\"release_latest_version\">--</span></div>";
+  html += "<div class=\"row\"><strong>Notes:</strong></div>";
   html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
-  html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>Latest release URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
-  html += "<div class=\"actions\"><button id=\"online_update_button\" type=\"button\" disabled>Update Firmware</button></div>";
+  html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
   html += "</div>";
+  html += "<form id=\"firmware_form\" method=\"post\" action=\"/firmware\" enctype=\"multipart/form-data\" style=\"margin-top:16px;\">";
+  html += "<div><label for=\"firmware_file\">Manual firmware update</label><input id=\"firmware_file\" name=\"firmware_file\" type=\"file\" accept=\".bin,application/octet-stream\"></div>";
+  html += "<div class=\"hint\">Use the ";
+  html += DEVICE_MODEL_NAME;
+  html += " .bin package for this device.</div>";
+  html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+  html += "<div id=\"firmware_keep_data_notice\" class=\"message info hidden\" style=\"margin-top:14px;\">Saved data and settings stay on the device with the firmware update.</div>";
+  html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_install_button\" type=\"button\" disabled>Install</button></div>";
   html += "</form></section>";
+
   html += "<script>";
   html += "(function(){";
   html += "const form=document.getElementById('config_form');";
@@ -2067,26 +2211,26 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const statusBox=document.getElementById('validation_status');";
   html += "const firmwareForm=document.getElementById('firmware_form');";
   html += "const firmwareFileInput=document.getElementById('firmware_file');";
-  html += "const firmwareUploadButton=document.getElementById('firmware_upload_button');";
+  html += "const firmwareInstallButton=document.getElementById('firmware_install_button');";
+  html += "const firmwareKeepDataNotice=document.getElementById('firmware_keep_data_notice');";
   html += "const firmwareStatus=document.getElementById('firmware_status');";
   html += "const releaseCheckButton=document.getElementById('release_check_button');";
   html += "const releaseStatus=document.getElementById('release_status');";
   html += "const releaseSummary=document.getElementById('release_summary');";
   html += "const releaseLatestVersion=document.getElementById('release_latest_version');";
-  html += "const releaseName=document.getElementById('release_name');";
-  html += "const releasePackage=document.getElementById('release_package');";
   html += "const releaseNotes=document.getElementById('release_notes');";
-  html += "const onlineUpdateButton=document.getElementById('online_update_button');";
-  html += "const releasesUrlText=document.getElementById('releases_url_text');";
-  html += "const copyReleasesUrlButton=document.getElementById('copy_releases_url_button');";
   html += "const latestReleaseUrlRow=document.getElementById('latest_release_url_row');";
   html += "const latestReleaseUrlText=document.getElementById('latest_release_url_text');";
   html += "const copyLatestReleaseUrlButton=document.getElementById('copy_latest_release_url_button');";
+  html += "const batteryLogText=document.getElementById('battery_log_text');";
+  html += "const copyBatteryLogButton=document.getElementById('copy_battery_log_button');";
+  html += "const batteryLogStatus=document.getElementById('battery_log_status');";
   html += "const mqttPassInput=document.getElementById('mqtt_pass');";
   html += "const clearMqttPass=document.getElementById('clear_mqtt_pass');";
   html += "const freedomPreviewValue=document.getElementById('freedom_preview_value');";
   html += "const freedomPreviewHint=document.getElementById('freedom_preview_hint');";
   html += "let validatedSignature='';";
+  html += "let onlineFirmwareAvailable=false;";
   html += "let previewPriceUsd=";
   html += String(previewPriceUsd, 2);
   html += ";";
@@ -2099,26 +2243,47 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "let previewHasMqttBalanceBtc=";
   html += previewHasBalanceBtc ? "true" : "false";
   html += ";";
+  html += "const SETUP_SCROLL_KEY='freedom_clock_setup_scroll_y';";
+  html += "let setupUserInteracted=false;";
+  html += "let validationInFlight=false;";
+  html += "let releaseCheckInFlight=false;";
+  html += "['pointerdown','touchstart','keydown'].forEach(function(name){window.addEventListener(name,function(){setupUserInteracted=true;},{once:true,passive:true});});";
   html += "function signature(){return form?new URLSearchParams(new FormData(form)).toString():'';}";
   html += "function setStatus(text,kind){if(!statusBox)return;if(!text){statusBox.style.display='none';statusBox.textContent='';statusBox.className='message info';return;}statusBox.textContent=text;statusBox.className='message '+(kind||'info');statusBox.style.display='block';}";
   html += "function setFirmwareStatus(text,kind){if(!firmwareStatus)return;if(!text){firmwareStatus.style.display='none';firmwareStatus.textContent='';firmwareStatus.className='message info';return;}firmwareStatus.textContent=text;firmwareStatus.className='message '+(kind||'info');firmwareStatus.style.display='block';}";
   html += "function setReleaseStatus(text,kind){if(!releaseStatus)return;if(!text){releaseStatus.style.display='none';releaseStatus.textContent='';releaseStatus.className='message info';return;}releaseStatus.textContent=text;releaseStatus.className='message '+(kind||'info');releaseStatus.style.display='block';}";
-  html += "function invalidate(msg){validatedSignature='';if(saveButton)saveButton.disabled=true;if(msg)setStatus(msg,'info');}";
-  html += "function syncOwnerUppercase(){if(ownerInput)ownerInput.value=(ownerInput.value||'').toUpperCase();}";
+  html += "function setBatteryLogStatus(text,kind){if(!batteryLogStatus)return;if(!text){batteryLogStatus.style.display='none';batteryLogStatus.textContent='';batteryLogStatus.className='message info';return;}batteryLogStatus.textContent=text;batteryLogStatus.className='message '+(kind||'info');batteryLogStatus.style.display='block';}";
+  html += "function invalidate(msg){validatedSignature='';if(saveButton)saveButton.disabled=true;if(msg)setStatus(msg,'info');else setStatus('', 'info');}";
+  html += "function focusWithoutScroll(el){if(!el||!el.focus)return;try{el.focus({preventScroll:true});}catch(e){el.focus();}}";
+  html += "function blurEditableFocus(){const el=document.activeElement;if(!el)return;const tag=String(el.tagName||'').toUpperCase();if((tag==='INPUT'||tag==='SELECT'||tag==='TEXTAREA')&&el.blur)el.blur();}";
+  html += "function rememberScrollPosition(y){try{sessionStorage.setItem(SETUP_SCROLL_KEY,String(Math.max(0,Math.round(y||0))));}catch(e){}}";
+  html += "function takeRememberedScrollPosition(){try{const raw=sessionStorage.getItem(SETUP_SCROLL_KEY);sessionStorage.removeItem(SETUP_SCROLL_KEY);const parsed=parseInt(raw||'',10);return Number.isFinite(parsed)&&parsed>0?parsed:null;}catch(e){return null;}}";
+  html += "function clearRememberedScrollPositionSoon(){setTimeout(function(){try{sessionStorage.removeItem(SETUP_SCROLL_KEY);}catch(e){}},5000);}";
+  html += "function restoreScrollPosition(y,focusEl){const target=Math.max(0,y||0);const restore=function(){window.scrollTo(0,target);if(focusEl)focusWithoutScroll(focusEl);else blurEditableFocus();};if(focusEl)focusWithoutScroll(focusEl);else blurEditableFocus();requestAnimationFrame(restore);[0,120].forEach(function(delay){setTimeout(restore,delay);});}";
+  html += "function suppressInitialInputFocus(){if('scrollRestoration' in history)history.scrollRestoration='manual';const remembered=takeRememberedScrollPosition();if(remembered!==null){restoreScrollPosition(remembered);return;}const guard=document.getElementById('focus_guard');const run=function(){if(setupUserInteracted)return;if(guard&&guard.focus){try{guard.focus({preventScroll:true});}catch(e){}}blurEditableFocus();if((window.scrollY||document.documentElement.scrollTop||0)<80)window.scrollTo(0,0);};[0,250,750].forEach(function(delay){setTimeout(run,delay);});window.addEventListener('pageshow',function(){setTimeout(run,0);});}";
+  html += "function syncOwnerUppercase(){if(ownerInput)ownerInput.value=(ownerInput.value||'').toUpperCase().slice(0,";
+  html += String(OWNER_NAME_MAX_DISPLAY_CHARS);
+  html += ");}";
+  html += "function sanitizeNumberInput(el){if(!el)return;const mode=el.getAttribute('data-number')||'decimal';let value=String(el.value||'').replace(/,/g,'.');if(mode==='int'){el.value=value.replace(/[^0-9]/g,'');return;}value=value.replace(/[^0-9.]/g,'');const firstDot=value.indexOf('.');if(firstDot!==-1){value=value.slice(0,firstDot+1)+value.slice(firstDot+1).replace(/[.]/g,'');}el.value=value;}";
+  html += "function wireNumberInputs(){document.querySelectorAll('[data-number]').forEach(function(el){sanitizeNumberInput(el);el.addEventListener('input',function(){sanitizeNumberInput(el);});el.addEventListener('paste',function(){setTimeout(function(){sanitizeNumberInput(el);},0);});});}";
   html += "function normalizeVersion(text){return String(text||'').trim().replace(/^v/i,'');}";
   html += "async function copyText(text,label){const value=String(text||'').trim();if(!value){setReleaseStatus('Nothing to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{const area=document.createElement('textarea');area.value=value;area.setAttribute('readonly','');area.style.position='fixed';area.style.left='-9999px';document.body.appendChild(area);area.select();document.execCommand('copy');document.body.removeChild(area);}setReleaseStatus((label||'Link')+' copied. If iOS blocks clipboard access, select the URL text manually.','ok');}catch(err){setReleaseStatus('Copy failed. Select the URL text manually and copy it from there.','err');}}";
-  html += "function hideReleaseSummary(){if(releaseSummary)releaseSummary.classList.add('hidden');if(latestReleaseUrlRow)latestReleaseUrlRow.classList.add('hidden');if(onlineUpdateButton)onlineUpdateButton.disabled=true;}";
-  html += "function renderReleaseInfo(data){const latestTag=String((data&&data.tag)||'').trim();const latestTitle=String((data&&data.name)||latestTag||'Unnamed release').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();const packageLabel=String((data&&data.package)||'').trim();const assetAvailable=!!(data&&data.asset_available);const newer=!!(data&&data.newer);if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseName)releaseName.textContent=latestTitle;if(releasePackage)releasePackage.textContent=packageLabel||(assetAvailable?'Available':'Not found');if(releaseNotes)releaseNotes.textContent=notes;if(onlineUpdateButton)onlineUpdateButton.disabled=!(assetAvailable&&newer);if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
+  html += "async function copyBatteryLog(){const value=String((batteryLogText&&batteryLogText.value)||'').trim();if(!value){setBatteryLogStatus('No battery log to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{batteryLogText.focus();batteryLogText.select();document.execCommand('copy');}setBatteryLogStatus('Battery log copied.','ok');}catch(err){setBatteryLogStatus('Copy failed. Select the log text manually and copy it.','err');}}";
+  html += "function hasManualFirmwareFile(){return !!(firmwareFileInput&&firmwareFileInput.files&&firmwareFileInput.files.length>0);}";
+  html += "function updateFirmwareInstallButton(){const enabled=!!(onlineFirmwareAvailable||hasManualFirmwareFile());if(firmwareInstallButton)firmwareInstallButton.disabled=!enabled;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.toggle('hidden',!enabled);}";
+  html += "function hideReleaseSummary(){onlineFirmwareAvailable=false;if(releaseSummary)releaseSummary.classList.add('hidden');if(latestReleaseUrlRow)latestReleaseUrlRow.classList.add('hidden');updateFirmwareInstallButton();}";
+  html += "function handleUnlockRequired(data,setter){if(data&&data.unlock_required){if(setter)setter(data.message||'Setup session expired. Enter your PIN again.','err');setTimeout(function(){window.location.replace('/');},1200);return true;}return false;}";
+  html += "function renderReleaseInfo(data){hideReleaseSummary();const latestTag=String((data&&data.tag)||'').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();const assetAvailable=!!(data&&data.asset_available);const newer=!!(data&&data.newer);onlineFirmwareAvailable=assetAvailable&&newer;if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseNotes)releaseNotes.textContent=notes;if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
   html += GITHUB_RELEASES_URL;
-  html += "';if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
+  html += "';const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
   html += FIRMWARE_VERSION;
-  html += "');if(!assetAvailable){setReleaseStatus('Latest release loaded, but the matching firmware package was not found. Use manual download if needed.','err');return;}if(!newer){setReleaseStatus(latestNormalized&&latestNormalized===currentNormalized?'This device already matches the latest published release.':'Latest published release is older than this firmware. Manual upload is still available.','info');return;}setReleaseStatus('New firmware is available. You can install it directly or use manual download.','ok');}";
+  html += "');updateFirmwareInstallButton();if(!assetAvailable){setReleaseStatus('Latest release loaded, but the matching firmware package was not found. Use manual update.','err');return;}if(!newer){setReleaseStatus('You are using the latest version.','ok');return;}if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');setReleaseStatus('New firmware is available.','ok');}";
   html += "function readNumber(id){const el=document.getElementById(id);const value=parseFloat(el&&el.value?el.value:'');return Number.isFinite(value)?value:0;}";
   html += "function formatMoney(value){if(!(value>=0))return '--';if(value>=1000000)return (value/1000000).toFixed(2)+' mil USD';if(value>=1000)return (value/1000).toFixed(2)+'k USD';return value.toFixed(2)+' USD';}";
   html += "function computeFreedom(usdWealth,monthlyExpenseToday,inflationAnnual,assetGrowthAnnual,useMode,borrowFeeAnnual){const out={hitCap:false,years:0,months:0,weeks:0,coveredWeeks:0};if(!(usdWealth>0)||!(monthlyExpenseToday>0))return out;if(!(inflationAnnual>=0))inflationAnnual=0;if(!(assetGrowthAnnual>-0.99))assetGrowthAnnual=-0.99;if(!(borrowFeeAnnual>-0.99))borrowFeeAnnual=-0.99;const maxYears=200;const maxMonths=12*maxYears;if(useMode==='1'){let annualExpenseMul=1+inflationAnnual;let annualAssetMul=1+assetGrowthAnnual;let annualDebtMul=1+borrowFeeAnnual;let annualExpense=monthlyExpenseToday*12;let collateralValue=usdWealth;let debt=0;let years=0;while(years<maxYears){collateralValue*=annualAssetMul;debt*=annualDebtMul;if((debt+annualExpense)>collateralValue)break;debt+=annualExpense;annualExpense*=annualExpenseMul;years++;}out.hitCap=years>=maxYears;let partialYear=0;if(!out.hitCap&&annualExpense>0&&collateralValue>debt){partialYear=(collateralValue-debt)/annualExpense;if(partialYear>0.999)partialYear=0.999;if(partialYear<0)partialYear=0;}const coveredMonthsFloat=(years+partialYear)*12;const coveredFullMonths=Math.floor(coveredMonthsFloat);const partialMonth=coveredMonthsFloat-coveredFullMonths;out.years=Math.floor(coveredFullMonths/12);out.months=coveredFullMonths%12;out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=coveredMonthsFloat*4.345;return out;}let monthlyExpenseMul=Math.pow(1+inflationAnnual,1/12);let monthlyAssetMul=Math.pow(1+assetGrowthAnnual,1/12);let monthlyExpense=monthlyExpenseToday;let remaining=usdWealth;let months=0;while(months<maxMonths){remaining*=monthlyAssetMul;if(remaining<monthlyExpense)break;remaining-=monthlyExpense;monthlyExpense*=monthlyExpenseMul;months++;}out.hitCap=months>=maxMonths;out.years=Math.floor(months/12);out.months=months%12;let partialMonth=0;if(monthlyExpense>0&&remaining>0){partialMonth=remaining/monthlyExpense;if(partialMonth>0.999)partialMonth=0.999;if(partialMonth<0)partialMonth=0;}out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=months*4.345+(partialMonth*4.345);return out;}";
   html += "function formatFreedom(result){if(result.hitCap)return 'FOREVER';if(result.years>99)return String(result.years)+'Y';const years=String(result.years).padStart(2,'0');const months=String(result.months).padStart(2,'0');return years+'Y '+months+'M '+String(result.weeks)+'W';}";
-  html += "function capturePreviewMarketValues(message){const text=String(message||'');const priceMatch=text.match(/Price:\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(priceMatch){const parsed=parseFloat(priceMatch[1]);if(Number.isFinite(parsed)&&parsed>0){previewPriceUsd=parsed;previewHasPriceUsd=true;}}const amountMatch=text.match(/Amount:\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(amountMatch){const parsed=parseFloat(amountMatch[1]);if(Number.isFinite(parsed)&&parsed>=0){previewMqttBalanceBtc=parsed;previewHasMqttBalanceBtc=true;}}}";
-  html += "function updateFreedomPreview(){if(!freedomPreviewValue||!freedomPreviewHint)return;const assetMode=asset?asset.value:'2';const useMode=mode?mode.value:'0';let usdWealth=0;let hint='Preview uses the same freedom-time calculation as the device.';if(assetMode==='1'){usdWealth=readNumber('default_wealth_usd');hint+=' Wealth assumption: '+formatMoney(usdWealth)+'.';}else if(assetMode==='2'){const btc=readNumber('manual_btc_amount');if(!previewHasPriceUsd||!(previewPriceUsd>0)){freedomPreviewValue.textContent='--';freedomPreviewHint.textContent='Run Test Connection to fetch BTC/USD price for the static BTC preview.';return;}usdWealth=btc*previewPriceUsd;hint+=' Static BTC assumption: '+btc.toFixed(8).replace(/0+$/,'').replace(/\\.$/,'')+' BTC at '+previewPriceUsd.toFixed(2)+' USD/BTC = '+formatMoney(usdWealth)+'.';}else{if(!previewHasPriceUsd||!previewHasMqttBalanceBtc||!(previewPriceUsd>0)||!(previewMqttBalanceBtc>=0)){freedomPreviewValue.textContent='--';freedomPreviewHint.textContent='Run Test Connection to load MQTT BTC price and amount for the preview.';return;}usdWealth=previewMqttBalanceBtc*previewPriceUsd;hint+=' MQTT assumption: '+previewMqttBalanceBtc.toFixed(8).replace(/0+$/,'').replace(/\\.$/,'')+' BTC at '+previewPriceUsd.toFixed(2)+' USD/BTC = '+formatMoney(usdWealth)+'.';}const result=computeFreedom(usdWealth,readNumber('monthly_exp_usd'),readNumber('inflation_annual_pct')/100,readNumber('wealth_growth_annual_pct')/100,useMode,readNumber('borrow_fee_annual_pct')/100);freedomPreviewValue.textContent=formatFreedom(result);if(result.hitCap)hint+=' FOREVER means the model reached the device cap of 200 years.';freedomPreviewHint.textContent=hint;}";
+  html += "function capturePreviewMarketValues(message){const text=String(message||'');const priceMatch=text.match(/(?:BTC price|Price):\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(priceMatch){const parsed=parseFloat(priceMatch[1]);if(Number.isFinite(parsed)&&parsed>0){previewPriceUsd=parsed;previewHasPriceUsd=true;}}const amountMatch=text.match(/(?:BTC amount|Amount):\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(amountMatch){const parsed=parseFloat(amountMatch[1]);if(Number.isFinite(parsed)&&parsed>=0){previewMqttBalanceBtc=parsed;previewHasMqttBalanceBtc=true;}}}";
+  html += "function updateFreedomPreview(){if(!freedomPreviewValue||!freedomPreviewHint)return;const assetMode=asset?asset.value:'2';const useMode=mode?mode.value:'0';let usdWealth=0;let hint='';if(assetMode==='1'){usdWealth=readNumber('default_wealth_usd');}else if(assetMode==='2'){const btc=readNumber('manual_btc_amount');if(!previewHasPriceUsd||!(previewPriceUsd>0)){freedomPreviewValue.textContent='--';freedomPreviewHint.textContent='Run Test Connection to fetch BTC/USD price.';return;}usdWealth=btc*previewPriceUsd;}else{if(!previewHasPriceUsd||!previewHasMqttBalanceBtc||!(previewPriceUsd>0)||!(previewMqttBalanceBtc>=0)){freedomPreviewValue.textContent='--';freedomPreviewHint.textContent='Run Test Connection to load BTC price and amount.';return;}usdWealth=previewMqttBalanceBtc*previewPriceUsd;}const result=computeFreedom(usdWealth,readNumber('monthly_exp_usd'),readNumber('inflation_annual_pct')/100,readNumber('wealth_growth_annual_pct')/100,useMode,readNumber('borrow_fee_annual_pct')/100);freedomPreviewValue.textContent=formatFreedom(result);if(result.hitCap)hint='FOREVER means the model reached the device cap of 200 years.';freedomPreviewHint.textContent=hint;}";
   html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
   html += "function updateRefreshControls(){if(!refreshValueInput)return;const settings=refreshSettingsForUnit();refreshValueInput.min=String(settings.min);refreshValueInput.max=String(settings.max);refreshValueInput.step='1';let value=parseInt(refreshValueInput.value||'',10);if(!Number.isFinite(value))value=settings.min;if(value<settings.min)value=settings.min;if(value>settings.max)value=settings.max;refreshValueInput.value=String(value);if(refreshHint)refreshHint.textContent=settings.hint;}";
   html += "function update(){";
@@ -2143,22 +2308,31 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "try{";
   html += "const response=await fetch('/wifi-list',{cache:'no-store'});";
   html += "const data=await response.json();";
+  html += "if(handleUnlockRequired(data,setStatus))return;";
   html += "if(!data.ok)throw new Error(data.message||'Wi-Fi scan failed.');";
   html += "const networks=Array.isArray(data.networks)?data.networks:[];";
   html += "if(wifiSelect){wifiSelect.innerHTML='';const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent=networks.length?'Choose a nearby network':'No networks found';wifiSelect.appendChild(placeholder);const currentSsid=wifiSsidInput?wifiSsidInput.value:'';networks.forEach(function(net){const option=document.createElement('option');option.value=net.ssid||'';option.textContent=(net.ssid||'');if(currentSsid&&option.value===currentSsid)option.selected=true;wifiSelect.appendChild(option);});wifiSelect.disabled=false;}";
   html += "}catch(err){if(wifiSelect){wifiSelect.innerHTML='<option value=\"\">Type your Wi-Fi name manually</option>';wifiSelect.disabled=false;}setStatus(err&&err.message?err.message:'Wi-Fi scan failed. Type the SSID manually.','err');}";
   html += "if(scanButton)scanButton.disabled=false;";
   html += "}";
-  html += "async function validateCurrentSettings(){";
+  html += "async function validateCurrentSettings(event){";
+  html += "if(event){event.preventDefault();event.stopPropagation();}";
+  html += "if(validationInFlight)return;";
+  html += "validationInFlight=true;";
+  html += "const actionButton=event&&event.currentTarget?event.currentTarget:validateButton;";
+  html += "const previousScrollY=window.scrollY||document.documentElement.scrollTop||0;";
+  html += "rememberScrollPosition(previousScrollY);";
+  html += "focusWithoutScroll(actionButton);";
+  html += "window.scrollTo(0,previousScrollY);";
   html += "const currentSignature=signature();";
   html += "validatedSignature='';";
   html += "if(saveButton)saveButton.disabled=true;";
-  html += "if(validateButton)validateButton.disabled=true;";
   html += "if(scanButton)scanButton.disabled=true;";
   html += "setStatus('Testing current settings. This can take a few seconds...','info');";
   html += "try{";
   html += "const response=await fetch('/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams(new FormData(form)).toString(),cache:'no-store'});";
   html += "const data=await response.json();";
+  html += "if(handleUnlockRequired(data,setStatus))return;";
   html += "if(!data.ok){setStatus(data.message||'Validation failed.','err');return;}";
   html += "if(currentSignature!==signature()){setStatus('Validation finished, but the form changed meanwhile. Run the test again.','info');return;}";
   html += "validatedSignature=currentSignature;";
@@ -2167,34 +2341,47 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(saveButton)saveButton.disabled=false;";
   html += "setStatus(data.message||'Validation successful.','ok');";
   html += "}catch(err){setStatus('Validation request failed. Keep this phone connected to the device Wi-Fi and try again.','err');}";
-  html += "finally{if(validateButton)validateButton.disabled=false;if(scanButton)scanButton.disabled=false;}";
+  html += "finally{validationInFlight=false;if(scanButton)scanButton.disabled=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
   html += "}";
-  html += "async function checkLatestRelease(){";
-  html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
+  html += "async function checkLatestRelease(event){";
+  html += "if(event){event.preventDefault();event.stopPropagation();}";
+  html += "if(releaseCheckInFlight)return;";
+  html += "releaseCheckInFlight=true;";
+  html += "const actionButton=event&&event.currentTarget?event.currentTarget:releaseCheckButton;";
+  html += "const previousScrollY=window.scrollY||document.documentElement.scrollTop||0;";
+  html += "rememberScrollPosition(previousScrollY);";
+  html += "focusWithoutScroll(actionButton);";
+  html += "window.scrollTo(0,previousScrollY);";
   html += "hideReleaseSummary();";
   html += "setReleaseStatus('Checking GitHub for the latest published release. This can take a few seconds...','info');";
   html += "try{";
   html += "const response=await fetch('/release-info',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
   html += "const data=await response.json();";
+  html += "if(handleUnlockRequired(data,setReleaseStatus))return;";
   html += "if(!data.ok){setReleaseStatus(data.message||'Could not load release info.','err');return;}";
   html += "renderReleaseInfo(data);";
   html += "}catch(err){setReleaseStatus('Release check failed. Keep this phone connected and make sure the device can reach the internet over Wi-Fi.','err');}";
-  html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
+  html += "finally{releaseCheckInFlight=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
   html += "}";
-  html += "async function installLatestFirmware(){";
-  html += "if(!window.confirm('Update to the latest Freedom Clock firmware now? Keep this phone connected until the device restarts.'))return;";
-  html += "if(onlineUpdateButton)onlineUpdateButton.disabled=true;";
+  html += "function validateManualFirmwareFile(){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){setFirmwareStatus('Choose a firmware .bin file first.','err');return false;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){setFirmwareStatus('Firmware file must end with .bin.','err');return false;}return true;}";
+  html += "async function installOnlineFirmware(){";
+  html += "if(!window.confirm('Install the latest Freedom Clock firmware now? Keep this phone connected until the device restarts.'))return;";
+  html += "if(firmwareInstallButton)firmwareInstallButton.disabled=true;";
+  html += "if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.add('hidden');";
   html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
   html += "setReleaseStatus('Downloading and installing firmware. Keep this phone connected. The device will reboot when finished.','info');";
   html += "try{";
   html += "const response=await fetch('/firmware-online',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
   html += "const data=await response.json();";
-  html += "if(!data.ok){setReleaseStatus(data.message||'Firmware update failed.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;return;}";
-  html += "setReleaseStatus(data.message||'Firmware updated. Rebooting ...','ok');";
-  html += "}catch(err){setReleaseStatus('Firmware update request failed. Use manual upload if the device does not restart.','err');if(onlineUpdateButton)onlineUpdateButton.disabled=false;}";
+  html += "if(handleUnlockRequired(data,setReleaseStatus)){updateFirmwareInstallButton();return;}";
+  html += "if(!data.ok){setReleaseStatus(data.message||'Firmware install failed.','err');updateFirmwareInstallButton();return;}";
+  html += "setReleaseStatus(data.message||'Firmware installed. Rebooting ...','ok');";
+  html += "}catch(err){setReleaseStatus('Firmware install request failed. Use manual update if the device does not restart.','err');updateFirmwareInstallButton();}";
   html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
   html += "}";
-  html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();invalidate('Test the current settings before saving.');}";
+  html += "function installSelectedFirmware(){if(hasManualFirmwareFile()){if(!validateManualFirmwareFile())return;if(firmwareInstallButton)firmwareInstallButton.disabled=true;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.add('hidden');setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');if(firmwareForm)firmwareForm.submit();return;}if(onlineFirmwareAvailable){installOnlineFirmware();return;}setFirmwareStatus('Choose a firmware .bin file or check for a newer release first.','err');";
+  html += "}";
+  html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();invalidate();}";
   html += "if(asset) asset.addEventListener('change', update);";
   html += "if(mode) mode.addEventListener('change', update);";
   html += "if(setupPinEnabled) setupPinEnabled.addEventListener('change', update);";
@@ -2202,26 +2389,44 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(ownerInput) ownerInput.addEventListener('input', syncOwnerUppercase);";
   html += "if(wifiPassInput) wifiPassInput.addEventListener('input', function(){if(clearWifiPass&&wifiPassInput.value)clearWifiPass.checked=false;});";
   html += "if(mqttPassInput) mqttPassInput.addEventListener('input', function(){if(clearMqttPass&&mqttPassInput.value)clearMqttPass.checked=false;});";
-  html += "if(wifiSelect) wifiSelect.addEventListener('change', function(){if(wifiSsidInput)wifiSsidInput.value=wifiSelect.value||'';invalidate('Test the current settings before saving.');});";
+  html += "if(wifiSelect) wifiSelect.addEventListener('change', function(){if(wifiSsidInput)wifiSsidInput.value=wifiSelect.value||'';invalidate();});";
   html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', function(event){if(!validatedSignature||(saveButton&&saveButton.disabled)){event.preventDefault();setStatus('Please test the current settings before saving.','err');}});}";
-  html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){if(firmwareUploadButton)firmwareUploadButton.disabled=false;setFirmwareStatus('', 'info');});";
-  html += "if(firmwareForm){firmwareForm.addEventListener('submit', function(event){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){event.preventDefault();setFirmwareStatus('Choose a firmware .bin file first.','err');return;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){event.preventDefault();setFirmwareStatus('Firmware file must end with .bin.','err');return;}if(firmwareUploadButton)firmwareUploadButton.disabled=true;setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');});}";
+  html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){setFirmwareStatus('', 'info');updateFirmwareInstallButton();});";
   html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
-  html += "if(onlineUpdateButton) onlineUpdateButton.addEventListener('click', installLatestFirmware);";
-  html += "if(copyReleasesUrlButton) copyReleasesUrlButton.addEventListener('click', function(){copyText(releasesUrlText?releasesUrlText.textContent:'','GitHub Releases URL');});";
+  html += "if(firmwareInstallButton) firmwareInstallButton.addEventListener('click', installSelectedFirmware);";
   html += "if(copyLatestReleaseUrlButton) copyLatestReleaseUrlButton.addEventListener('click', function(){copyText(latestReleaseUrlText?latestReleaseUrlText.textContent:'','Latest release URL');});";
+  html += "if(copyBatteryLogButton) copyBatteryLogButton.addEventListener('click', copyBatteryLog);";
   html += "if(scanButton) scanButton.addEventListener('click', refreshWifiList);";
   html += "if(validateButton) validateButton.addEventListener('click', validateCurrentSettings);";
+  html += "suppressInitialInputFocus();";
+  html += "wireNumberInputs();";
   html += "syncOwnerUppercase();";
   html += "update();";
   html += "updateFreedomPreview();";
-  html += "invalidate('Test the current settings before saving.');";
+  html += "invalidate();";
+  html += "updateFirmwareInstallButton();";
   html += "refreshWifiList();";
   html += "})();";
   html += "</script>";
   html += "</div></body></html>";
   return html;
 }
+
+static constexpr int BATTERY_BODY_W = 20;
+static constexpr int BATTERY_BODY_H = 10;
+static constexpr int BATTERY_TIP_W = 2;
+static constexpr int BATTERY_TIP_H = 5;
+static constexpr int BATTERY_RIGHT_MARGIN = 2;
+static constexpr int BATTERY_TEXT_GAP = 2;
+static constexpr int BATTERY_MAX_TEXT_W = 24;
+static constexpr int BATTERY_GROUP_MIN_X = DEVICE_DISPLAY_WIDTH
+  - BATTERY_RIGHT_MARGIN
+  - BATTERY_MAX_TEXT_W
+  - BATTERY_TEXT_GAP
+  - BATTERY_BODY_W
+  - BATTERY_TIP_W;
+static constexpr int BATTERY_ICON_Y = 4;
+static constexpr int BATTERY_TEXT_Y = 6;
 
 static void drawBatteryIcon(
   int x,
@@ -2253,6 +2458,28 @@ static void drawBatteryIcon(
   if (fillW > 0) {
     display.fillRect(innerX, innerY, fillW, innerH, theme.foreground);
   }
+}
+
+static void drawBatteryStatus(int deviceBatteryPct, DisplayThemeMode themeMode) {
+  char pctText[8];
+  snprintf(pctText, sizeof(pctText), "%d%%", clampInt(deviceBatteryPct, 0, 100));
+  const int textW = estimateTextWidthSize1(pctText);
+  const int textX = DEVICE_DISPLAY_WIDTH - BATTERY_RIGHT_MARGIN - textW;
+  const int iconX = textX - BATTERY_TEXT_GAP - BATTERY_BODY_W - BATTERY_TIP_W;
+
+  drawBatteryIcon(
+    iconX,
+    BATTERY_ICON_Y,
+    deviceBatteryPct,
+    BATTERY_BODY_W,
+    BATTERY_BODY_H,
+    BATTERY_TIP_W,
+    BATTERY_TIP_H,
+    themeMode
+  );
+  display.setCursor(textX, BATTERY_TEXT_Y);
+  display.setTextSize(1);
+  display.print(pctText);
 }
 
 static void drawPortalScreen(
@@ -2369,6 +2596,26 @@ static void drawFreedomClock(
   char freedomTitleShort[32];
   const char* safeOwnerName = hasText(ownerName) ? ownerName : DEFAULT_OWNER_NAME;
   const size_t ownerNameLen = strlen(safeOwnerName);
+#if DEVICE_PROFILE_E290
+  const int LEFT_X = 8;
+  const int NUMBER_LEFT_X = LEFT_X + 10;
+  const int NUMBER_STEP_X = 62;
+  const int MONTH_X = NUMBER_LEFT_X + NUMBER_STEP_X;
+  const int WEEK_X = NUMBER_LEFT_X + (NUMBER_STEP_X * 2);
+  const int DIVIDER_X = 214;
+  const int RIGHT_X = 226;
+  const int BATTERY_X = BATTERY_GROUP_MIN_X;
+  const int TOP_NUMBER_Y = 23;
+  const int TOP_SUFFIX_Y = 28;
+  const int MID_LINE_Y = 59;
+  const int LIFE_TITLE_Y = 70;
+  const int BOTTOM_NUMBER_Y = 89;
+  const int BOTTOM_SUFFIX_Y = 94;
+  const int RIGHT_TITLE_Y = 36;
+  const int RIGHT_VALUE_Y = 66;
+  const int RIGHT_TITLE_X = RIGHT_X + 4;
+  const int RIGHT_VALUE_X = RIGHT_X + 8;
+#else
   const int LEFT_X = 4;
   const int NUMBER_LEFT_X = LEFT_X + 10;
   const int NUMBER_STEP_X = 62;
@@ -2376,7 +2623,7 @@ static void drawFreedomClock(
   const int WEEK_X = NUMBER_LEFT_X + (NUMBER_STEP_X * 2);
   const int DIVIDER_X = 181;
   const int RIGHT_X = 188;
-  const int BATTERY_X = 200;
+  const int BATTERY_X = BATTERY_GROUP_MIN_X;
   const int TOP_NUMBER_Y = 23;
   const int TOP_SUFFIX_Y = 28;
   const int MID_LINE_Y = 59;
@@ -2387,6 +2634,7 @@ static void drawFreedomClock(
   const int RIGHT_VALUE_Y = 66;
   const int RIGHT_TITLE_X = RIGHT_X + 4;
   const int RIGHT_VALUE_X = RIGHT_X + 8;
+#endif
   const int titleMaxWidthWide = BATTERY_X - LEFT_X - 8;
   const int titleMaxWidthNarrow = DIVIDER_X - LEFT_X - 4;
   const int titleFitSlack = 18;
@@ -2420,11 +2668,7 @@ static void drawFreedomClock(
   display.setCursor(LEFT_X, 8);
   display.println(freedomTitle);
 
-  drawBatteryIcon(BATTERY_X, 5, deviceBatteryPct, 22, 10, 2, 5, themeMode);
-  display.setCursor(226, 7);
-  display.setTextSize(1);
-  display.print(deviceBatteryPct);
-  display.print("%");
+  drawBatteryStatus(deviceBatteryPct, themeMode);
 
   display.drawLine(DIVIDER_X, 12, DIVIDER_X, 116, theme.foreground);
 
@@ -2530,16 +2774,13 @@ static void drawInfoScreen(
   static constexpr int TITLE_Y = 12;
   static constexpr int LABEL_X = 10;
   static constexpr int VALUE_X = 142;
-  static constexpr int ROW_Y0 = 25;
+  static constexpr int ROW_Y0 = 30;
   static constexpr int ROW_STEP = 10;
 
   prepareScreen(themeMode);
 
   display.setTextSize(1);
-  drawBatteryIcon(200, 5, deviceBatteryPct, 22, 10, 2, 5, themeMode);
-  display.setCursor(226, 7);
-  display.print(deviceBatteryPct);
-  display.print("%");
+  drawBatteryStatus(deviceBatteryPct, themeMode);
 
   display.setTextSize(1);
   display.setCursor(TITLE_X, TITLE_Y);
@@ -2590,7 +2831,7 @@ static void drawInfoScreen(
   display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 5));
   display.print("AGE NOW:");
   display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 5));
-  snprintf(value, sizeof(value), "%d Y", currentAgeFromBirthYear(cfg.birthYear, now));
+  snprintf(value, sizeof(value), "~%d Y", currentAgeFromBirthYear(cfg.birthYear, now));
   display.print(value);
 
   display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 6));
@@ -2600,7 +2841,7 @@ static void drawInfoScreen(
   display.print(value);
 
   display.setCursor(LABEL_X, ROW_Y0 + (ROW_STEP * 7));
-  display.print("WITHDRAWAL MODE:");
+  display.print("SPEND MODE:");
   display.setCursor(VALUE_X, ROW_Y0 + (ROW_STEP * 7));
   if (portfolioUseMode == PORTFOLIO_USE_MODE_BORROW) {
     snprintf(value, sizeof(value), "BORROW YEARLY (%.1f%%/Y)", cfg.borrowFeeAnnual * 100.0f);
@@ -2664,17 +2905,14 @@ static void drawWealthStatsScreen(
 
   prepareScreen(themeMode);
 
-  drawBatteryIcon(200, 5, deviceBatteryPct, 22, 10, 2, 5, themeMode);
-  display.setCursor(226, 7);
-  display.setTextSize(1);
-  display.print(deviceBatteryPct);
-  display.print("%");
+  drawBatteryStatus(deviceBatteryPct, themeMode);
 
   display.setTextSize(1);
   formatCompactUsd(usdWealth, currentWealth, sizeof(currentWealth));
   display.setCursor(TITLE_X, TITLE_Y);
-  display.print("CURRENT WEALTH USD: ");
+  display.print("WEALTH CHANGE (CURRENT:");
   display.print(currentWealth);
+  display.print(")");
 
   const int rowBtcX = 44;
   const int rowPriceX = 100;
@@ -2871,6 +3109,15 @@ static void formatSignedWeeksDelta(float deltaWeeks, char* dst, size_t dstSize) 
   snprintf(dst, dstSize, "%+.1fW", (double)deltaWeeks);
 }
 
+static void formatFreedomDuration(bool hitCap, int years, int months, int weeks, char* dst, size_t dstSize) {
+  if (!dst || dstSize == 0) return;
+  if (hitCap) {
+    safeCopyCString(dst, dstSize, "FOREVER");
+    return;
+  }
+  snprintf(dst, dstSize, "%dy %dm %dw", years, months, weeks);
+}
+
 static void drawFreedomCheckinScreen(
   const DeviceConfig& cfg,
   time_t now,
@@ -2893,32 +3140,12 @@ static void drawFreedomCheckinScreen(
 
   int32_t historicalWealthUsd = 0;
   char freedomDeltaText[16];
+  char currentFreedomText[20];
   const DisplayThemeMode themeMode = sanitizeThemeMode(cfg.displayThemeMode);
 
   prepareScreen(themeMode);
 
-  drawBatteryIcon(200, 5, deviceBatteryPct, 22, 10, 2, 5, themeMode);
-  display.setCursor(226, 7);
-  display.setTextSize(1);
-  display.print(deviceBatteryPct);
-  display.print("%");
-
-  display.setTextSize(1);
-  static constexpr int TITLE_X = 8;
-  static constexpr int TITLE_Y = 12;
-  display.setCursor(TITLE_X, TITLE_Y);
-  display.print("FREEDOM CHANGE");
-
-  static constexpr int LAST_X = 10;
-  static constexpr int FREEDOM_X = 92;
-  static constexpr int HEADER_Y = 32;
-  static constexpr int ROW_Y0 = 46;
-  static constexpr int ROW_STEP = 14;
-
-  display.setCursor(LAST_X, HEADER_Y);
-  display.print("LAST");
-  display.setCursor(FREEDOM_X, HEADER_Y);
-  display.print("FREEDOM");
+  drawBatteryStatus(deviceBatteryPct, themeMode);
 
   bool currentFreedomHitCap = false;
   int currentYears = 0;
@@ -2938,6 +3165,26 @@ static void drawFreedomCheckinScreen(
     currentWeeks,
     currentCoveredWeeks
   );
+  formatFreedomDuration(currentFreedomHitCap, currentYears, currentMonths, currentWeeks, currentFreedomText, sizeof(currentFreedomText));
+
+  display.setTextSize(1);
+  static constexpr int TITLE_X = 8;
+  static constexpr int TITLE_Y = 12;
+  display.setCursor(TITLE_X, TITLE_Y);
+  display.print("FREEDOM CHANGE (CURRENT:");
+  display.print(currentFreedomText);
+  display.print(")");
+
+  static constexpr int LAST_X = 10;
+  static constexpr int FREEDOM_X = 44;
+  static constexpr int HEADER_Y = 32;
+  static constexpr int ROW_Y0 = 46;
+  static constexpr int ROW_STEP = 14;
+
+  display.setCursor(LAST_X, HEADER_Y);
+  display.print("LAST");
+  display.setCursor(FREEDOM_X, HEADER_Y);
+  display.print("FREEDOM");
 
   for (size_t i = 0; i < (sizeof(periods) / sizeof(periods[0])); i++) {
     display.setCursor(LAST_X, ROW_Y0 + (ROW_STEP * (int)i));
@@ -2968,8 +3215,14 @@ static void drawFreedomCheckinScreen(
       previousCoveredWeeks
     );
 
-    const float freedomDeltaWeeks = currentCoveredWeeks - previousCoveredWeeks;
-    formatSignedWeeksDelta(freedomDeltaWeeks, freedomDeltaText, sizeof(freedomDeltaText));
+    if (currentFreedomHitCap && !previousFreedomHitCap) {
+      safeCopyCString(freedomDeltaText, sizeof(freedomDeltaText), "FOREVER");
+    } else {
+      const float freedomDeltaWeeks = currentFreedomHitCap && previousFreedomHitCap
+        ? 0.0f
+        : (currentCoveredWeeks - previousCoveredWeeks);
+      formatSignedWeeksDelta(freedomDeltaWeeks, freedomDeltaText, sizeof(freedomDeltaText));
+    }
     display.print(freedomDeltaText);
   }
 
@@ -2998,6 +3251,16 @@ static void portalSendJson(bool ok, const char* message) {
   portalServer.send(200, "application/json; charset=utf-8", json);
 }
 
+static void portalSendUnlockRequiredJson() {
+  portalServer.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  portalServer.sendHeader("Pragma", "no-cache");
+  portalServer.send(
+    200,
+    "application/json; charset=utf-8",
+    "{\"ok\":false,\"unlock_required\":true,\"message\":\"Setup session expired. Enter your PIN again.\"}"
+  );
+}
+
 static void loadSubmittedPortalConfig(DeviceConfig& submitted) {
   safeCopyString(submitted.ownerName, sizeof(submitted.ownerName), portalServer.arg("owner_name"));
   submitted.birthYear = portalServer.arg("birth_year").toInt();
@@ -3013,7 +3276,14 @@ static void loadSubmittedPortalConfig(DeviceConfig& submitted) {
   submitted.inflationAnnual = portalServer.arg("inflation_annual_pct").toFloat() / 100.0f;
   submitted.wealthGrowthAnnual = portalServer.arg("wealth_growth_annual_pct").toFloat() / 100.0f;
   submitted.defaultWealthUsd = portalServer.arg("default_wealth_usd").toFloat();
-  submitted.manualBtcAmount = portalServer.arg("manual_btc_amount").toFloat();
+  normalizeDecimalInputText(
+    portalServer.arg("manual_btc_amount"),
+    submitted.manualBtcAmountText,
+    sizeof(submitted.manualBtcAmountText),
+    8,
+    DEFAULT_MANUAL_BTC_AMOUNT_TEXT
+  );
+  submitted.manualBtcAmount = strtof(submitted.manualBtcAmountText, nullptr);
   submitted.borrowFeeAnnual = portalServer.arg("borrow_fee_annual_pct").toFloat() / 100.0f;
   submitted.assetMode = (uint8_t)portalServer.arg("asset_mode").toInt();
   submitted.portfolioUseMode = (uint8_t)portalServer.arg("portfolio_use_mode").toInt();
@@ -3269,8 +3539,14 @@ static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, si
     return false;
   }
 
-  WiFiClientSecure secureClient;
-  secureClient.setInsecure();
+  if (!ensureClockReadyForTls(errorBuf, errorBufSize)) {
+    return false;
+  }
+
+  TrustedWiFiClientSecure secureClient;
+  if (!configureTrustedTlsClient(secureClient, errorBuf, errorBufSize)) {
+    return false;
+  }
 
   HTTPClient http;
   http.setTimeout(FIRMWARE_HTTP_TIMEOUT_MS);
@@ -3360,8 +3636,16 @@ static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, si
 }
 
 static void handlePortalFirmwareOnline() {
-  if (requirePortalUnlock("Enter the setup PIN to update firmware.")) {
-    return;
+  if (hasSetupPinConfigured(deviceConfig)) {
+    if (isPortalUnlockExpired()) {
+      portalUnlocked = false;
+      portalUnlockedAtMs = 0;
+    }
+    if (!portalUnlocked) {
+      portalSendUnlockRequiredJson();
+      return;
+    }
+    refreshPortalUnlockSession();
   }
 
   DeviceConfig submitted = deviceConfig;
@@ -3380,7 +3664,7 @@ static void handlePortalFirmwareOnline() {
   GitHubReleaseInfo releaseInfo;
   char errorMessage[160];
   if (!fetchLatestGitHubReleaseInfo(releaseInfo, errorMessage, sizeof(errorMessage))) {
-    String error = String("Wi-Fi OK\nRELEASE CHECK failed\n") + errorMessage;
+    String error = String("Wi-Fi: OK\nRELEASE CHECK: failed\n") + errorMessage;
     portalSendJson(false, error.c_str());
     return;
   }
@@ -3398,7 +3682,7 @@ static void handlePortalFirmwareOnline() {
   }
 
   if (!installFirmwareFromUrl(firmwareUrl, errorMessage, sizeof(errorMessage))) {
-    String error = String("Wi-Fi OK\nRELEASE CHECK OK\nFIRMWARE DOWNLOAD failed\n") + errorMessage;
+    String error = String("Wi-Fi: OK\nRELEASE CHECK: OK\nFIRMWARE DOWNLOAD: failed\n") + errorMessage;
     portalSendJson(false, error.c_str());
     return;
   }
@@ -3417,7 +3701,7 @@ static void handlePortalWifiList() {
       portalUnlockedAtMs = 0;
     }
     if (!portalUnlocked) {
-      portalSendJson(false, "Unlock setup first.");
+      portalSendUnlockRequiredJson();
       return;
     }
     refreshPortalUnlockSession();
@@ -3470,7 +3754,7 @@ static void handlePortalValidate() {
       portalUnlockedAtMs = 0;
     }
     if (!portalUnlocked) {
-      portalSendJson(false, "Unlock setup first.");
+      portalSendUnlockRequiredJson();
       return;
     }
     refreshPortalUnlockSession();
@@ -3501,10 +3785,9 @@ static void handlePortalValidate() {
   const bool hasWifiConfig = hasText(submitted.wifiSsid);
 
   if (assetMode == ASSET_MODE_WEALTH && !hasWifiConfig) {
-    String successMessage = String("Wi-Fi skipped\n")
+    String successMessage = String("Wi-Fi: skipped\n")
       + "Static net worth mode does not require Wi-Fi.\n"
-      + "Without Wi-Fi time sync, lifetime and coverage calculations can become less accurate.\n"
-      + "Save unlocked."
+      + "Without Wi-Fi time sync, lifetime and coverage calculations can become less accurate."
       + sourceChangedNote;
     portalSendJson(true, successMessage.c_str());
     return;
@@ -3516,8 +3799,7 @@ static void handlePortalValidate() {
   }
 
   if (assetMode == ASSET_MODE_WEALTH) {
-    String successMessage = String("Wi-Fi OK\n")
-      + "Save unlocked."
+    String successMessage = String("Wi-Fi: OK")
       + sourceChangedNote;
     portalSendJson(true, successMessage.c_str());
     return;
@@ -3527,7 +3809,7 @@ static void handlePortalValidate() {
     char fetchError[96];
     float validatedPrice = 0.0f;
     if (!fetchCoinGeckoBtcPriceUsd(validatedPrice, fetchError, sizeof(fetchError))) {
-      String error = String("Wi-Fi OK\nPRICE API failed\n") + fetchError;
+      String error = String("Wi-Fi: OK\nPRICE API: failed\n") + fetchError;
       portalSendJson(false, error.c_str());
       return;
     }
@@ -3538,7 +3820,7 @@ static void handlePortalValidate() {
     snprintf(
       successMessage,
       sizeof(successMessage),
-      "Wi-Fi OK\nPRICE API OK\n- Price: %.2f USD\nSave unlocked.%s",
+      "Wi-Fi: OK\nPRICE API: OK\n- BTC price: %.2f USD%s",
       validatedPrice,
       sourceChangedNote
     );
@@ -3557,7 +3839,7 @@ static void handlePortalValidate() {
   if (!connectMQTT(submitted, MQTT_CONNECT_TIMEOUT_MS)) {
     mqttValidationMode = false;
     if (mqttClient.connected()) mqttClient.disconnect();
-    portalSendJson(false, "Wi-Fi OK\nMQTT failed\nCheck the broker host, port, and credentials.");
+    portalSendJson(false, "Wi-Fi: OK\nMQTT: failed\nCheck the broker host, port, and credentials.");
     return;
   }
 
@@ -3580,19 +3862,19 @@ static void handlePortalValidate() {
   char amountValue[24];
   char amountLine[48];
   if (priceValid) {
-    snprintf(priceLine, sizeof(priceLine), "- Price: %.2f USD", validatedPrice);
+    snprintf(priceLine, sizeof(priceLine), "- BTC price: %.2f USD", validatedPrice);
   } else {
-    snprintf(priceLine, sizeof(priceLine), "- Price: %s", gotPrice ? "invalid number" : "no value returned");
+    snprintf(priceLine, sizeof(priceLine), "- BTC price: %s", gotPrice ? "invalid number" : "no value returned");
   }
   if (balanceValid) {
     formatTrimmedBtcAmount(validatedBalance, amountValue, sizeof(amountValue));
-    snprintf(amountLine, sizeof(amountLine), "- Amount: %s BTC", amountValue);
+    snprintf(amountLine, sizeof(amountLine), "- BTC amount: %s", amountValue);
   } else {
-    snprintf(amountLine, sizeof(amountLine), "- Amount: %s", gotBalance ? "invalid number" : "no value returned");
+    snprintf(amountLine, sizeof(amountLine), "- BTC amount: %s", gotBalance ? "invalid number" : "no value returned");
   }
 
   if (!priceValid || !balanceValid) {
-    String error = String("Wi-Fi OK\nMQTT OK\n")
+    String error = String("Wi-Fi: OK\nMQTT: OK\n")
       + priceLine + "\n"
       + amountLine + "\n"
       + "Use retained numeric messages on both topics.";
@@ -3600,10 +3882,9 @@ static void handlePortalValidate() {
     return;
   }
 
-  String successMessage = String("Wi-Fi OK\nMQTT OK\n")
+  String successMessage = String("Wi-Fi: OK\nMQTT: OK\n")
     + priceLine + "\n"
-    + amountLine + "\n"
-    + "Save unlocked."
+    + amountLine
     + sourceChangedNote;
   portalSendJson(true, successMessage.c_str());
 }
@@ -3615,7 +3896,7 @@ static void handlePortalReleaseInfo() {
       portalUnlockedAtMs = 0;
     }
     if (!portalUnlocked) {
-      portalSendJson(false, "Unlock setup first.");
+      portalSendUnlockRequiredJson();
       return;
     }
     refreshPortalUnlockSession();
@@ -3637,7 +3918,7 @@ static void handlePortalReleaseInfo() {
   GitHubReleaseInfo releaseInfo;
   char fetchError[128];
   if (!fetchLatestGitHubReleaseInfo(releaseInfo, fetchError, sizeof(fetchError))) {
-    String error = String("Wi-Fi OK\nRELEASE CHECK failed\n") + fetchError;
+    String error = String("Wi-Fi: OK\nRELEASE CHECK: failed\n") + fetchError;
     portalSendJson(false, error.c_str());
     return;
   }
@@ -3689,7 +3970,6 @@ static void setupPortalRoutes() {
 }
 
 static bool startConfigurationPortal() {
-  buildPortalCredentials();
   portalSaveRequested = false;
   portalExitAction = PORTAL_EXIT_ACTION_NONE;
   resetPortalFirmwareUploadState();
@@ -3700,6 +3980,7 @@ static bool startConfigurationPortal() {
   WiFi.disconnect(true);
   delay(100);
   WiFi.mode(WIFI_AP_STA);
+  buildPortalCredentials();
   WiFi.softAPConfig(CONFIG_AP_IP, CONFIG_AP_GATEWAY, CONFIG_AP_SUBNET);
   if (!WiFi.softAP(portalApSsid, portalApPassword)) {
     return false;
@@ -3959,15 +4240,20 @@ static bool parseGitHubReleaseInfo(const String& payload, GitHubReleaseInfo& out
   if (version.startsWith("v") || version.startsWith("V")) {
     version.remove(0, 1);
   }
-  parseGitHubReleaseAssetUrl(payload, String("FreedomClock-") + version + "-manual-update-open.bin", outInfo.openBinUrl);
-  parseGitHubReleaseAssetUrl(payload, String("FreedomClock-") + version + "-manual-update-secure.bin", outInfo.secureBinUrl);
+  const String modelPrefix = String("FreedomClock-") + version + "-" + DEVICE_MODEL_NAME;
+  if (!parseGitHubReleaseAssetUrl(payload, modelPrefix + "-manual-update-open.bin", outInfo.openBinUrl)) {
+    parseGitHubReleaseAssetUrl(payload, String("FreedomClock-") + version + "-manual-update-open.bin", outInfo.openBinUrl);
+  }
+  if (!parseGitHubReleaseAssetUrl(payload, modelPrefix + "-manual-update-secure.bin", outInfo.secureBinUrl)) {
+    parseGitHubReleaseAssetUrl(payload, String("FreedomClock-") + version + "-manual-update-secure.bin", outInfo.secureBinUrl);
+  }
 
   normalizeReleaseNotesPreview(outInfo.body);
   return outInfo.tagName.length() > 0;
 }
 
 static bool selectReleaseFirmwareUrl(const GitHubReleaseInfo& releaseInfo, bool securePackage, String& outUrl, String& outPackageLabel) {
-  outPackageLabel = securePackage ? "secure package" : "open package";
+  outPackageLabel = String(DEVICE_MODEL_NAME) + (securePackage ? " secure package" : " open package");
   outUrl = securePackage ? releaseInfo.secureBinUrl : releaseInfo.openBinUrl;
   outUrl.trim();
   return outUrl.length() > 0;
@@ -3979,8 +4265,14 @@ static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* error
     return false;
   }
 
-  WiFiClientSecure secureClient;
-  secureClient.setInsecure();
+  if (!ensureClockReadyForTls(errorBuf, errorBufSize)) {
+    return false;
+  }
+
+  TrustedWiFiClientSecure secureClient;
+  if (!configureTrustedTlsClient(secureClient, errorBuf, errorBufSize)) {
+    return false;
+  }
 
   HTTPClient http;
   http.setTimeout(PRICE_HTTP_TIMEOUT_MS);
@@ -4060,8 +4352,14 @@ static bool fetchCoinGeckoBtcPriceUsd(float& outPriceUsd, char* errorBuf, size_t
     return false;
   }
 
-  WiFiClientSecure secureClient;
-  secureClient.setInsecure();
+  if (!ensureClockReadyForTls(errorBuf, errorBufSize)) {
+    return false;
+  }
+
+  TrustedWiFiClientSecure secureClient;
+  if (!configureTrustedTlsClient(secureClient, errorBuf, errorBufSize)) {
+    return false;
+  }
 
   HTTPClient http;
   http.setTimeout(PRICE_HTTP_TIMEOUT_MS);
@@ -4233,16 +4531,30 @@ void setup() {
   rtc_gpio_deinit((gpio_num_t)PIN_USER_BUTTON);
   pinMode(PIN_USER_BUTTON, INPUT_PULLUP);
 
+  SetupBootAction bootAction = detectSetupBootAction();
+
   display.begin();
-  buildPortalCredentials();
+  buildDeviceId(deviceId, sizeof(deviceId));
   initializeEncryptedNvsIfAvailable();
   portalSessionMessage[0] = '\0';
   portalSessionMessageIsError = false;
 
-  SetupBootAction bootAction = detectSetupBootAction();
+  float vbat = readBatteryVoltage();
+  int pct = batteryPercentFromVoltage(vbat);
+#if LOG_BATTERY_STATS
+  loadBatteryLog(batteryLog);
+  if (appendBatteryLogSample(batteryLog, lastKnownUnixTime, vbat, pct)) {
+    saveBatteryLog(batteryLog);
+  }
+#else
+  loadBatteryLog(batteryLog);
+#endif
+
   if (bootAction == SETUP_BOOT_ACTION_FACTORY_RESET) {
     clearSavedDeviceConfig();
     clearWealthHistory();
+    clearBatteryLog();
+    clearBatteryLogInMemory(batteryLog);
     clearWealthHistoryInMemory(wealthHistory);
     applyDefaultDeviceConfig(deviceConfig);
     safeCopyCString(portalSessionMessage, sizeof(portalSessionMessage), "Factory reset complete. Showing default values below.");
@@ -4261,11 +4573,9 @@ void setup() {
   const uint8_t wakeExtraPressCount = (wakeCause == ESP_SLEEP_WAKEUP_EXT0)
     ? detectAdditionalWakePresses(2)
     : 0;
-  const bool showPerformanceScreen = wakeExtraPressCount >= 1;
-  const bool showFreedomCheckinScreen = wakeExtraPressCount >= 2;
-
-  float vbat = readBatteryVoltage();
-  int pct = batteryPercentFromVoltage(vbat);
+  const bool showFreedomCheckinScreen = (wakeCause == ESP_SLEEP_WAKEUP_EXT0) && wakeExtraPressCount == 0;
+  const bool showPerformanceScreen = (wakeCause == ESP_SLEEP_WAKEUP_EXT0) && wakeExtraPressCount == 1;
+  const bool showInfoScreen = (wakeCause == ESP_SLEEP_WAKEUP_EXT0) && wakeExtraPressCount >= 2;
 
   gotPrice = false;
   gotBalance = false;
@@ -4359,7 +4669,6 @@ void setup() {
     coveredPercent = clampInt((int)(coverageRatio * 100.0f + 0.5f), 0, 999);
   }
 
-  bool showInfoScreen = (wakeCause == ESP_SLEEP_WAKEUP_EXT0) && !showPerformanceScreen && !showFreedomCheckinScreen;
   if (showFreedomCheckinScreen) {
     drawFreedomCheckinScreen(deviceConfig, now, usdWealth, pct, wealthHistory);
   } else if (showPerformanceScreen) {

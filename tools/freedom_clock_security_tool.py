@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SKETCH_PATH = REPO_ROOT / "Freedom_Clock_HeltecVME213.ino"
+SKETCH_PATH = REPO_ROOT / "Freedom_Clock_HeltecVME.ino"
 PARTITIONS_PATH = REPO_ROOT / "partitions.csv"
 WORKDIR = REPO_ROOT / "provisioning-workdir"
 RELEASES_DIR = WORKDIR / "releases"
@@ -36,7 +36,17 @@ DOCS_DIR = REPO_ROOT / "docs"
 RELEASE_NOTES_DIR = DOCS_DIR / "releases"
 LOCAL_GITHUB_TOKEN_PATH = Path.home() / ".freedom-clock" / "github-token"
 
-BOARD_FQBN = "Heltec-esp32:esp32:heltec_vision_master_e_213"
+BOARD_PROFILES = {
+    "e213": {
+        "model": "E213",
+        "fqbn": "Heltec-esp32:esp32:heltec_vision_master_e_213",
+    },
+    "e290": {
+        "model": "E290",
+        "fqbn": "Heltec-esp32:esp32:heltec_vision_master_e290",
+    },
+}
+DEFAULT_BOARD_PROFILE = "e213"
 ARDUINO_CLI_DEFAULT = Path(
     "/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
 )
@@ -49,6 +59,8 @@ ESPSECURE_BIN = ESPTOOL_ROOT / "espsecure"
 ARDUINO_PLATFORM_ROOT = HELTEC_PACKAGE_ROOT / "hardware" / "esp32" / "3.3.8"
 BOOT_APP0_BIN = ARDUINO_PLATFORM_ROOT / "tools" / "partitions" / "boot_app0.bin"
 CHIP = "esp32s3"
+PRIVATE_DIR_MODE = 0o700
+PRIVATE_FILE_MODE = 0o600
 
 FIRMWARE_VERSION_RE = re.compile(
     r'FIRMWARE_VERSION\[\]\s*=\s*"(?P<version>[^"]+)"'
@@ -98,8 +110,36 @@ class ToolError(RuntimeError):
     pass
 
 
+def restrict_permissions(path: Path, mode: int, description: str) -> None:
+    if os.name != "posix":
+        return
+    if path.is_symlink():
+        raise ToolError(f"{description} must not be a symlink: {path}")
+    try:
+        path.chmod(mode)
+    except OSError as exc:
+        raise ToolError(f"Could not set private permissions on {description} at {path}: {exc}") from exc
+
+
+def ensure_private_dir(path: Path, description: str) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    restrict_permissions(path, PRIVATE_DIR_MODE, description)
+
+
+def ensure_private_file(path: Path, description: str) -> None:
+    require_file(path, description)
+    restrict_permissions(path, PRIVATE_FILE_MODE, description)
+
+
 def ensure_workspace() -> None:
-    for path in [WORKDIR, RELEASES_DIR, VAULT_DIR, BUNDLES_DIR, PUBLIC_UPDATES_DIR, BOOTLOADERS_DIR, BUILD_ROOT, DOCS_DIR, RELEASE_NOTES_DIR]:
+    for path, description in [
+        (WORKDIR, "provisioning workspace"),
+        (VAULT_DIR, "key vault"),
+        (BUNDLES_DIR, "per-device bundle directory"),
+    ]:
+        ensure_private_dir(path, description)
+
+    for path in [RELEASES_DIR, PUBLIC_UPDATES_DIR, BOOTLOADERS_DIR, BUILD_ROOT, DOCS_DIR, RELEASE_NOTES_DIR]:
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -203,6 +243,20 @@ def latest_release_dir() -> Path:
     return max(releases, key=lambda path: path.stat().st_mtime)
 
 
+def resolve_board_profile(args: argparse.Namespace) -> dict[str, str]:
+    board = getattr(args, "board", None) or DEFAULT_BOARD_PROFILE
+    try:
+        return BOARD_PROFILES[board]
+    except KeyError as exc:
+        valid = ", ".join(sorted(BOARD_PROFILES))
+        raise ToolError(f"Unknown board profile '{board}'. Use one of: {valid}.") from exc
+
+
+def board_release_name(base_name: str, board: str) -> str:
+    suffix = f"-{board.lower()}"
+    return base_name if base_name.lower().endswith(suffix) else f"{base_name}{suffix}"
+
+
 def latest_manual_update_dir() -> Path:
     ensure_workspace()
     releases = [path for path in PUBLIC_UPDATES_DIR.iterdir() if path.is_dir()]
@@ -242,6 +296,7 @@ def github_token() -> str:
         or os.environ.get("GH_TOKEN")
     )
     if not token and LOCAL_GITHUB_TOKEN_PATH.exists():
+        ensure_private_file(LOCAL_GITHUB_TOKEN_PATH, "local GitHub token")
         token = LOCAL_GITHUB_TOKEN_PATH.read_text().strip()
     if not token:
         raise ToolError(
@@ -431,7 +486,10 @@ def detect_tools() -> dict[str, str | bool | list[str]]:
 def build_release(args: argparse.Namespace) -> Path:
     ensure_workspace()
     arduino_cli = resolve_arduino_cli()
-    build_name = args.release_name or timestamp_slug()
+    profile = resolve_board_profile(args)
+    board = str(getattr(args, "board", None) or DEFAULT_BOARD_PROFILE)
+    base_name = args.release_name or timestamp_slug()
+    build_name = board_release_name(base_name, board)
     build_dir = BUILD_ROOT / build_name
     release_dir = RELEASES_DIR / build_name
     build_dir.mkdir(parents=True, exist_ok=True)
@@ -443,7 +501,7 @@ def build_release(args: argparse.Namespace) -> Path:
             str(arduino_cli),
             "compile",
             "--fqbn",
-            BOARD_FQBN,
+            profile["fqbn"],
             "--libraries",
             str(ARDUINO_LIBRARIES_DEFAULT),
             "--build-path",
@@ -453,14 +511,14 @@ def build_release(args: argparse.Namespace) -> Path:
     )
 
     artifact_map = {
-        "app.bin": build_dir / "Freedom_Clock_HeltecVME213.ino.bin",
-        "bootloader.bin": build_dir / "Freedom_Clock_HeltecVME213.ino.bootloader.bin",
-        "partitions.bin": build_dir / "Freedom_Clock_HeltecVME213.ino.partitions.bin",
+        "app.bin": build_dir / "Freedom_Clock_HeltecVME.ino.bin",
+        "bootloader.bin": build_dir / "Freedom_Clock_HeltecVME.ino.bootloader.bin",
+        "partitions.bin": build_dir / "Freedom_Clock_HeltecVME.ino.partitions.bin",
         "boot_app0.bin": BOOT_APP0_BIN,
         "flash_args.txt": build_dir / "flash_args",
         "sdkconfig": build_dir / "sdkconfig",
         "partitions.csv": build_dir / "partitions.csv",
-        "merged.bin": build_dir / "Freedom_Clock_HeltecVME213.ino.merged.bin",
+        "merged.bin": build_dir / "Freedom_Clock_HeltecVME.ino.merged.bin",
     }
     copied: dict[str, dict[str, str | int]] = {}
     print_step(f"Copying release artifacts into {release_dir}")
@@ -478,13 +536,14 @@ def build_release(args: argparse.Namespace) -> Path:
         "created_at_utc": timestamp_slug(),
         "release_name": build_name,
         "firmware_version": current_firmware_version(),
-        "fqbn": BOARD_FQBN,
+        "board": profile["model"],
+        "fqbn": profile["fqbn"],
         "files": copied,
         "offsets": {
-            "bootloader": offsets.get("Freedom_Clock_HeltecVME213.ino.bootloader.bin", "0x0"),
-            "partitions": offsets.get("Freedom_Clock_HeltecVME213.ino.partitions.bin", "0x8000"),
+            "bootloader": offsets.get("Freedom_Clock_HeltecVME.ino.bootloader.bin", "0x0"),
+            "partitions": offsets.get("Freedom_Clock_HeltecVME.ino.partitions.bin", "0x8000"),
             "boot_app0": offsets.get("boot_app0.bin", "0xe000"),
-            "app": offsets.get("Freedom_Clock_HeltecVME213.ino.bin", "0x10000"),
+            "app": offsets.get("Freedom_Clock_HeltecVME.ino.bin", "0x10000"),
         },
     }
     (release_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -500,8 +559,8 @@ def generate_keys(args: argparse.Namespace) -> Path:
 
     global_dir = VAULT_DIR / "global"
     device_dir = VAULT_DIR / "devices" / device_id
-    global_dir.mkdir(parents=True, exist_ok=True)
-    device_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(global_dir, "global signing-key directory")
+    ensure_private_dir(device_dir, f"device key directory for {device_id}")
 
     signing_key = global_dir / "secure_boot_signing_key.pem"
     signing_digest = global_dir / "secure_boot_signing_key_digest.bin"
@@ -522,6 +581,8 @@ def generate_keys(args: argparse.Namespace) -> Path:
                 str(signing_key),
             ]
         )
+    ensure_private_file(signing_key, "Secure Boot signing key")
+
     if not signing_digest.exists() or force:
         print_step("Generating Secure Boot V2 public-key digest")
         run_command(
@@ -545,6 +606,7 @@ def generate_keys(args: argparse.Namespace) -> Path:
                 str(flash_key),
             ]
         )
+    ensure_private_file(flash_key, "flash-encryption key")
 
     manifest = {
         "device_id": device_id,
@@ -661,7 +723,8 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
 
     mode = args.mode
     bundle_dir = BUNDLES_DIR / device_id / f"{release_dir.name}-{mode}"
-    bundle_dir.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(BUNDLES_DIR / device_id, f"bundle directory for {device_id}")
+    ensure_private_dir(bundle_dir, "provisioning bundle")
 
     manifest = json.loads((release_dir / "manifest.json").read_text())
     offsets = manifest["offsets"]
@@ -764,18 +827,27 @@ def prepare_bundle(args: argparse.Namespace) -> Path:
 
 def build_manual_update(args: argparse.Namespace) -> Path:
     ensure_workspace()
+    profile = resolve_board_profile(args)
     release_dir = build_release(args)
     release_manifest = json.loads((release_dir / "manifest.json").read_text())
     version = release_manifest["firmware_version"]
-    output_dir = PUBLIC_UPDATES_DIR / release_dir.name
+    output_name = args.release_name or release_dir.name
+    output_dir = PUBLIC_UPDATES_DIR / output_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    files: dict[str, dict[str, str | int | bool]] = {}
+    manifest_path = output_dir / "manifest.json"
+    if manifest_path.exists():
+        existing_manifest = json.loads(manifest_path.read_text())
+        files: dict[str, dict[str, str | int | bool]] = dict(existing_manifest.get("files", {}))
+    else:
+        files = {}
 
-    open_update_path = output_dir / f"FreedomClock-{version}-manual-update-open.bin"
+    model = profile["model"]
+    open_update_path = output_dir / f"FreedomClock-{version}-{model}-manual-update-open.bin"
     shutil.copy2(release_dir / "app.bin", open_update_path)
-    files["open"] = {
+    files[f"{model.lower()}_open"] = {
         "filename": open_update_path.name,
+        "board": model,
         "sha256": sha256_file(open_update_path),
         "size_bytes": open_update_path.stat().st_size,
         "requires_secure_boot": False,
@@ -783,7 +855,7 @@ def build_manual_update(args: argparse.Namespace) -> Path:
 
     secure_boot_key = VAULT_DIR / "global" / "secure_boot_signing_key.pem"
     if secure_boot_key.exists():
-        secure_update_path = output_dir / f"FreedomClock-{version}-manual-update-secure.bin"
+        secure_update_path = output_dir / f"FreedomClock-{version}-{model}-manual-update-secure.bin"
         print_step("Signing the public manual-update image for secure devices")
         run_command(
             [
@@ -798,44 +870,40 @@ def build_manual_update(args: argparse.Namespace) -> Path:
                 str(release_dir / "app.bin"),
             ]
         )
-        files["secure"] = {
+        files[f"{model.lower()}_secure"] = {
             "filename": secure_update_path.name,
+            "board": model,
             "sha256": sha256_file(secure_update_path),
             "size_bytes": secure_update_path.stat().st_size,
             "requires_secure_boot": True,
         }
 
-    readme_text = textwrap.dedent(
-        f"""\
-        Freedom Clock manual firmware update package
-        ==========================================
-
-        Firmware version: {version}
-        Built from release bundle: {release_dir.name}
-
-        Files:
-        - {files["open"]["filename"]}: use for normal development boards and devices that are not provisioned with Secure Boot.
-        """
+    file_lines = "\n".join(
+        f"- {metadata['filename']}: "
+        f"{metadata.get('board', 'unknown board')} "
+        f"{'secure devices only' if metadata.get('requires_secure_boot') else 'normal unlocked devices'}"
+        for metadata in sorted(files.values(), key=lambda item: str(item["filename"]))
     )
-    if "secure" in files:
-        readme_text += (
-            f"- {files['secure']['filename']}: use for production-hardened devices that were provisioned with Secure Boot.\n"
-        )
-    else:
-        readme_text += "- No secure-device package was generated because the Secure Boot signing key is not available on this Mac.\n"
-    readme_text += textwrap.dedent(
-        """\
-
-        How users install it:
-        1. Join the device setup Wi-Fi.
-        2. Open http://192.168.4.1
-        3. Go to Firmware Update.
-        4. Upload the correct .bin file.
-
-        Notes:
-        - Saved settings stay on the device.
-        - This package is for local setup-page upload, not for the production provisioning tool.
-        """
+    readme_text = (
+        "Freedom Clock manual firmware update package\n"
+        "==========================================\n\n"
+        f"Firmware version: {version}\n"
+        f"Latest built release bundle: {release_dir.name}\n\n"
+        "Files:\n"
+        f"{file_lines}\n"
+    )
+    if not any(metadata.get("requires_secure_boot") for metadata in files.values()):
+        readme_text += "\nNo secure-device package was generated because the Secure Boot signing key is not available on this Mac.\n"
+    readme_text += (
+        "\nHow users install it:\n"
+        "1. Join the device setup Wi-Fi.\n"
+        "2. Open http://192.168.4.1\n"
+        "3. Go to Firmware Update.\n"
+        "4. Upload the correct .bin file.\n\n"
+        "Notes:\n"
+        "- Saved settings stay on the device.\n"
+        "- Use the file matching the physical board model: E213 or E290.\n"
+        "- This package is for local setup-page upload, not for the production provisioning tool.\n"
     )
     (output_dir / "README.txt").write_text(readme_text)
 
@@ -848,7 +916,7 @@ def build_manual_update(args: argparse.Namespace) -> Path:
     manifest = {
         "created_at_utc": timestamp_slug(),
         "firmware_version": version,
-        "release_name": release_dir.name,
+        "release_name": output_name,
         "source_release_dir": str(release_dir),
         "files": files,
     }
@@ -889,8 +957,10 @@ def ensure_release_notes_file(path: Path, version: str) -> None:
 
         ## Installation
 
-        - `FreedomClock-{version}-manual-update-open.bin` for normal devices
-        - `FreedomClock-{version}-manual-update-secure.bin` for security-hardened devices
+        - `FreedomClock-{version}-E213-manual-update-open.bin` for normal E213 devices
+        - `FreedomClock-{version}-E290-manual-update-open.bin` for normal E290 devices
+        - `FreedomClock-{version}-E213-manual-update-secure.bin` for security-hardened E213 devices
+        - `FreedomClock-{version}-E290-manual-update-secure.bin` for security-hardened E290 devices
         """
     )
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1479,7 +1549,8 @@ def update_secure_device(args: argparse.Namespace) -> None:
         require_file(secure_boot_key, "Secure Boot signing key")
         require_file(flash_key, "per-device flash-encryption key")
         update_dir = BUNDLES_DIR / args.device_id / f"{release_dir.name}-app-update"
-        update_dir.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(BUNDLES_DIR / args.device_id, f"bundle directory for {args.device_id}")
+        ensure_private_dir(update_dir, "secure-device update bundle")
 
         print_step("Signing the Arduino application image")
         signed_app = update_dir / "app.signed.bin"
@@ -1567,10 +1638,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_parser_cmd = subparsers.add_parser("build-release", help="Compile the Arduino sketch and stage release artifacts.")
     build_parser_cmd.add_argument("--release-name", help="Optional release bundle name.")
+    build_parser_cmd.add_argument("--board", choices=sorted(BOARD_PROFILES), default=DEFAULT_BOARD_PROFILE, help="Board profile to compile. Default: e213.")
     build_parser_cmd.set_defaults(func=build_release)
 
     manual_update_parser = subparsers.add_parser("build-manual-update", help="Compile the sketch and assemble public .bin files for setup-page firmware uploads.")
     manual_update_parser.add_argument("--release-name", help="Optional release bundle name.")
+    manual_update_parser.add_argument("--board", choices=sorted(BOARD_PROFILES), default=DEFAULT_BOARD_PROFILE, help="Board profile to compile. Run once per supported board to add both E213 and E290 files.")
     manual_update_parser.set_defaults(func=build_manual_update)
 
     publish_release_parser = subparsers.add_parser("publish-github-release", help="Create or update a proper GitHub Release and upload the manual update assets.")

@@ -12,6 +12,7 @@ It can enable:
 - flash encryption, so raw flash dumps are not readable
 - encrypted NVS, so saved Wi-Fi, MQTT, setup PIN hash, and settings are protected at rest
 - Secure Boot V2, so the device only boots signed firmware
+- HTTPS certificate validation for online release checks and downloads in normal firmware
 
 It does not hide what is visible on the e-ink display. If the screen shows a name, age, BTC amount, or wealth estimate, someone holding the device can still see it.
 
@@ -25,7 +26,7 @@ Secure Boot V2 verifies firmware signatures during boot. You keep the private si
 
 ## Important Reality
 
-A normal Arduino IDE upload of `Freedom_Clock_HeltecVME213.ino` does not enable flash encryption or Secure Boot V2.
+A normal Arduino IDE upload of `Freedom_Clock_HeltecVME.ino` does not enable flash encryption or Secure Boot V2. The same source supports both E213 and E290 when the correct Heltec board is selected.
 
 Arduino uploads are still perfect for development, but hardware security needs a separate provisioning step because it burns one-way eFuses.
 
@@ -60,23 +61,26 @@ Never commit:
 Build normal user-facing update files with:
 
 ```bash
-./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.06.1
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.07.1 --board e213
+./tools/FreedomClockSecurityTool.command build-manual-update --release-name freedom-clock-v2026.05.07.1 --board e290
 ```
 
 This creates files under:
 
 ```text
-provisioning-workdir/public-updates/freedom-clock-v2026.05.06.1/
+provisioning-workdir/public-updates/freedom-clock-v2026.05.07.1/
 ```
 
-Typical output:
-- `FreedomClock-<version>-manual-update-open.bin`
-- `FreedomClock-<version>-manual-update-secure.bin` if a signing key exists locally
+Typical output for public releases should be model-specific:
+- `FreedomClock-<version>-E213-manual-update-open.bin`
+- `FreedomClock-<version>-E290-manual-update-open.bin`
+- `FreedomClock-<version>-E213-manual-update-secure.bin` if a signing key exists locally
+- `FreedomClock-<version>-E290-manual-update-secure.bin` if a signing key exists locally
 - `SHA256SUMS.txt`
 - `manifest.json`
 - `README.txt`
 
-Use the `open` package for normal unlocked devices. Use the `secure` package for security-hardened devices.
+Use the `open` package for normal unlocked devices. Use the `secure` package for security-hardened devices. Always use the package matching the physical board model.
 
 ## Secure Test Flow
 
@@ -127,8 +131,12 @@ The tool asks for typed confirmation before it burns irreversible eFuses unless 
 ## Updating Locked Devices
 
 Normal users should update through the setup page:
-- direct `Update Firmware` if the device has working Wi-Fi with internet access
-- manual `.bin` upload if the phone/laptop already downloaded the firmware file
+- direct online install if the device has working Wi-Fi with internet access
+- manual `.bin` install if the phone/laptop already downloaded the firmware file
+
+E213 and E290 use different compiled firmware packages. The setup page prefers the matching release asset for the detected compile-time board profile.
+
+Online updates require a valid TLS certificate chain and a synced clock. If NTP sync fails, the firmware refuses the online update path; use manual `.bin` upload or fix Wi-Fi/NTP first.
 
 For a manufacturer fallback over USB:
 
@@ -150,13 +158,13 @@ Release rule:
 The publish command is dry-run by default:
 
 ```bash
-./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.06.1
+./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.07.1
 ```
 
 Only this publishes:
 
 ```bash
-./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.06.1 --confirm-publish
+./tools/FreedomClockSecurityTool.command publish-github-release --release-name freedom-clock-v2026.05.07.1 --confirm-publish
 ```
 
 ## Recovery Expectations
