@@ -61,7 +61,7 @@ Join it with the setup password shown on the e-ink screen and open:
 http://192.168.4.1
 ```
 
-The setup Wi-Fi password is randomized each time setup mode starts. It is not derived from the public network name.
+The setup Wi-Fi password is stable per device and is shown on the e-ink screen.
 
 The setup page lets you configure owner, life expectancy, portfolio model, Wi-Fi, MQTT, display theme, refresh interval, optional setup PIN, and firmware updates.
 

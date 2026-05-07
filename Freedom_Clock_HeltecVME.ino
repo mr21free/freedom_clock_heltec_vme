@@ -12,7 +12,6 @@
 #include "esp_partition.h"
 #include "esp_flash_encrypt.h"
 #include "esp_secure_boot.h"
-#include "esp_random.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/rtc_io.h"
@@ -175,8 +174,8 @@ static constexpr uint16_t WIFI_POLL_DELAY_MS = 250;
 static constexpr uint16_t MQTT_RETRY_DELAY_MS = 500;
 static constexpr uint16_t NTP_SYNC_TIMEOUT_MS = 10000;
 static constexpr uint16_t PRICE_HTTP_TIMEOUT_MS = 8000;
-static constexpr uint16_t FIRMWARE_HTTP_TIMEOUT_MS = 20000;
-static constexpr uint32_t FIRMWARE_DOWNLOAD_IDLE_TIMEOUT_MS = 15000;
+static constexpr uint16_t FIRMWARE_HTTP_TIMEOUT_MS = 30000;
+static constexpr uint32_t FIRMWARE_DOWNLOAD_IDLE_TIMEOUT_MS = 30000;
 static constexpr uint16_t BUTTON_POLL_DELAY_MS = 20;
 static constexpr uint32_t CONFIG_BUTTON_HOLD_MS = 5000;
 static constexpr uint32_t FACTORY_RESET_HOLD_MS = 10000;
@@ -192,7 +191,7 @@ static constexpr char BATTERY_LOG_NAMESPACE[] = "batlog";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
 static constexpr uint32_t BATTERY_LOG_VERSION = 1;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.07.1";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.07.2"
 static constexpr char GITHUB_REPO_SLUG[] = "mr21free/freedom_clock_heltec_vme";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme/releases";
 static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme/releases/latest";
@@ -206,7 +205,7 @@ static constexpr uint16_t SETUP_PIN_HASH_ROUNDS = 2048;
 static constexpr char NTP_SERVER_1[] = "pool.ntp.org";
 static constexpr char NTP_SERVER_2[] = "time.nist.gov";
 static constexpr char COINGECKO_SIMPLE_PRICE_URL[] = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd&precision=2";
-static constexpr size_t GITHUB_RELEASE_NOTES_PREVIEW_MAX_CHARS = 1200;
+static constexpr size_t GITHUB_RELEASE_NOTES_PREVIEW_MAX_CHARS = 8192;
 static constexpr long NTP_GMT_OFFSET_SECONDS = 0;
 static constexpr int NTP_DAYLIGHT_OFFSET_SECONDS = 0;
 static const IPAddress CONFIG_AP_IP(192, 168, 4, 1);
@@ -1152,21 +1151,9 @@ static void buildDeviceId(char* dst, size_t dstSize) {
 }
 
 static void buildPortalCredentials() {
-  static constexpr char PASSWORD_ALPHABET[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
   buildDeviceId(deviceId, sizeof(deviceId));
   snprintf(portalApSsid, sizeof(portalApSsid), "%s%s", AP_SSID_PREFIX, deviceId);
-
-  safeCopyCString(portalApPassword, sizeof(portalApPassword), AP_PASSWORD_PREFIX);
-  size_t pos = strlen(portalApPassword);
-  while (pos < (sizeof(portalApPassword) - 1)) {
-    uint32_t randomValue = esp_random();
-    for (uint8_t i = 0; i < 6 && pos < (sizeof(portalApPassword) - 1); i++) {
-      portalApPassword[pos++] = PASSWORD_ALPHABET[randomValue & 0x1FU];
-      randomValue >>= 5;
-    }
-  }
-  portalApPassword[pos] = '\0';
+  snprintf(portalApPassword, sizeof(portalApPassword), "%s%s", AP_PASSWORD_PREFIX, deviceId);
 }
 
 static void buildMqttClientId(char* dst, size_t dstSize) {
@@ -2036,6 +2023,10 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".firmware-head{display:flex;justify-content:space-between;gap:12px;align-items:end;flex-wrap:wrap;}";
   html += ".firmware-version{font-size:20px;font-weight:800;color:#171717;}";
   html += ".firmware-model{font-size:13px;color:#645c53;margin-top:4px;}";
+  html += "@keyframes fc-spin{to{transform:rotate(360deg)}}";
+  html += ".install-progress{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;background:#fff8ef;border:1.5px solid #f7931a;margin-top:14px;}";
+  html += ".install-spinner{flex-shrink:0;width:20px;height:20px;border:2.5px solid rgba(247,147,26,.25);border-top-color:#f7931a;border-radius:50%;animation:fc-spin .9s linear infinite;}";
+  html += ".install-step{font-size:14px;color:#2b1700;font-weight:600;line-height:1.4;}";
   html += "textarea{width:100%;box-sizing:border-box;min-height:180px;padding:11px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;background:#fdfbf6;color:#171717;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.45;}";
   html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:16px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;touch-action:manipulation;}";
   html += "button.small{padding:10px 14px;font-size:16px;}";
@@ -2180,7 +2171,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += DEVICE_MODEL_NAME;
   html += " .bin package for this device.</div>";
   html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
-  html += "<div id=\"firmware_keep_data_notice\" class=\"message info hidden\" style=\"margin-top:14px;\">Saved data and settings stay on the device with the firmware update.</div>";
+  html += "<div id=\"firmware_progress\" class=\"hidden\"><div class=\"install-progress\"><div class=\"install-spinner\"></div><div id=\"firmware_step_text\" class=\"install-step\">Installing...</div></div></div>";
+  html += "<div id=\"firmware_keep_data_notice\" class=\"hint hidden\">Saved data and settings stay on the device with the firmware update.</div>";
   html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_install_button\" type=\"button\" disabled>Install</button></div>";
   html += "</form></section>";
 
@@ -2214,6 +2206,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const firmwareInstallButton=document.getElementById('firmware_install_button');";
   html += "const firmwareKeepDataNotice=document.getElementById('firmware_keep_data_notice');";
   html += "const firmwareStatus=document.getElementById('firmware_status');";
+  html += "const firmwareProgress=document.getElementById('firmware_progress');";
+  html += "const firmwareStepText=document.getElementById('firmware_step_text');";
   html += "const releaseCheckButton=document.getElementById('release_check_button');";
   html += "const releaseStatus=document.getElementById('release_status');";
   html += "const releaseSummary=document.getElementById('release_summary');";
@@ -2247,6 +2241,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "let setupUserInteracted=false;";
   html += "let validationInFlight=false;";
   html += "let releaseCheckInFlight=false;";
+  html += "let firmwareInstallInFlight=false;";
+  html += "let firmwareProgressInterval=null;";
+  html += "let firmwareProgressStart=0;";
   html += "['pointerdown','touchstart','keydown'].forEach(function(name){window.addEventListener(name,function(){setupUserInteracted=true;},{once:true,passive:true});});";
   html += "function signature(){return form?new URLSearchParams(new FormData(form)).toString():'';}";
   html += "function setStatus(text,kind){if(!statusBox)return;if(!text){statusBox.style.display='none';statusBox.textContent='';statusBox.className='message info';return;}statusBox.textContent=text;statusBox.className='message '+(kind||'info');statusBox.style.display='block';}";
@@ -2270,14 +2267,16 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "async function copyText(text,label){const value=String(text||'').trim();if(!value){setReleaseStatus('Nothing to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{const area=document.createElement('textarea');area.value=value;area.setAttribute('readonly','');area.style.position='fixed';area.style.left='-9999px';document.body.appendChild(area);area.select();document.execCommand('copy');document.body.removeChild(area);}setReleaseStatus((label||'Link')+' copied. If iOS blocks clipboard access, select the URL text manually.','ok');}catch(err){setReleaseStatus('Copy failed. Select the URL text manually and copy it from there.','err');}}";
   html += "async function copyBatteryLog(){const value=String((batteryLogText&&batteryLogText.value)||'').trim();if(!value){setBatteryLogStatus('No battery log to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{batteryLogText.focus();batteryLogText.select();document.execCommand('copy');}setBatteryLogStatus('Battery log copied.','ok');}catch(err){setBatteryLogStatus('Copy failed. Select the log text manually and copy it.','err');}}";
   html += "function hasManualFirmwareFile(){return !!(firmwareFileInput&&firmwareFileInput.files&&firmwareFileInput.files.length>0);}";
-  html += "function updateFirmwareInstallButton(){const enabled=!!(onlineFirmwareAvailable||hasManualFirmwareFile());if(firmwareInstallButton)firmwareInstallButton.disabled=!enabled;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.toggle('hidden',!enabled);}";
+  html += "function updateFirmwareInstallButton(){const enabled=!!(onlineFirmwareAvailable||hasManualFirmwareFile());if(firmwareInstallButton)firmwareInstallButton.disabled=!enabled||firmwareInstallInFlight;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.toggle('hidden',!enabled||firmwareInstallInFlight);}";
   html += "function hideReleaseSummary(){onlineFirmwareAvailable=false;if(releaseSummary)releaseSummary.classList.add('hidden');if(latestReleaseUrlRow)latestReleaseUrlRow.classList.add('hidden');updateFirmwareInstallButton();}";
   html += "function handleUnlockRequired(data,setter){if(data&&data.unlock_required){if(setter)setter(data.message||'Setup session expired. Enter your PIN again.','err');setTimeout(function(){window.location.replace('/');},1200);return true;}return false;}";
-  html += "function renderReleaseInfo(data){hideReleaseSummary();const latestTag=String((data&&data.tag)||'').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();const assetAvailable=!!(data&&data.asset_available);const newer=!!(data&&data.newer);onlineFirmwareAvailable=assetAvailable&&newer;if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseNotes)releaseNotes.textContent=notes;if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
+  html += "function renderReleaseInfo(data){hideReleaseSummary();setFirmwareStatus('', 'info');const latestTag=String((data&&data.tag)||'').trim();const notes=String((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';const url=String((data&&data.html_url)||'').trim();const assetAvailable=!!(data&&data.asset_available);const newer=!!(data&&data.newer);onlineFirmwareAvailable=assetAvailable&&newer;if(releaseLatestVersion)releaseLatestVersion.textContent=latestTag||'Unknown';if(releaseNotes)releaseNotes.textContent=notes;if(latestReleaseUrlText)latestReleaseUrlText.textContent=url||'";
   html += GITHUB_RELEASES_URL;
   html += "';const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
   html += FIRMWARE_VERSION;
-  html += "');updateFirmwareInstallButton();if(!assetAvailable){setReleaseStatus('Latest release loaded, but the matching firmware package was not found. Use manual update.','err');return;}if(!newer){setReleaseStatus('You are using the latest version.','ok');return;}if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');setReleaseStatus('New firmware is available.','ok');}";
+  html += "');updateFirmwareInstallButton();if(!assetAvailable){setReleaseStatus('Latest release loaded, but the matching firmware package was not found. Use manual update.','err');setFirmwareStatus('Matching online firmware package was not found. Use the ";
+  html += DEVICE_MODEL_NAME;
+  html += " .bin package for manual update.','err');return;}if(!newer){setReleaseStatus('You are using the latest version.','ok');return;}if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');setReleaseStatus('New firmware is available.','ok');}";
   html += "function readNumber(id){const el=document.getElementById(id);const value=parseFloat(el&&el.value?el.value:'');return Number.isFinite(value)?value:0;}";
   html += "function formatMoney(value){if(!(value>=0))return '--';if(value>=1000000)return (value/1000000).toFixed(2)+' mil USD';if(value>=1000)return (value/1000).toFixed(2)+'k USD';return value.toFixed(2)+' USD';}";
   html += "function computeFreedom(usdWealth,monthlyExpenseToday,inflationAnnual,assetGrowthAnnual,useMode,borrowFeeAnnual){const out={hitCap:false,years:0,months:0,weeks:0,coveredWeeks:0};if(!(usdWealth>0)||!(monthlyExpenseToday>0))return out;if(!(inflationAnnual>=0))inflationAnnual=0;if(!(assetGrowthAnnual>-0.99))assetGrowthAnnual=-0.99;if(!(borrowFeeAnnual>-0.99))borrowFeeAnnual=-0.99;const maxYears=200;const maxMonths=12*maxYears;if(useMode==='1'){let annualExpenseMul=1+inflationAnnual;let annualAssetMul=1+assetGrowthAnnual;let annualDebtMul=1+borrowFeeAnnual;let annualExpense=monthlyExpenseToday*12;let collateralValue=usdWealth;let debt=0;let years=0;while(years<maxYears){collateralValue*=annualAssetMul;debt*=annualDebtMul;if((debt+annualExpense)>collateralValue)break;debt+=annualExpense;annualExpense*=annualExpenseMul;years++;}out.hitCap=years>=maxYears;let partialYear=0;if(!out.hitCap&&annualExpense>0&&collateralValue>debt){partialYear=(collateralValue-debt)/annualExpense;if(partialYear>0.999)partialYear=0.999;if(partialYear<0)partialYear=0;}const coveredMonthsFloat=(years+partialYear)*12;const coveredFullMonths=Math.floor(coveredMonthsFloat);const partialMonth=coveredMonthsFloat-coveredFullMonths;out.years=Math.floor(coveredFullMonths/12);out.months=coveredFullMonths%12;out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=coveredMonthsFloat*4.345;return out;}let monthlyExpenseMul=Math.pow(1+inflationAnnual,1/12);let monthlyAssetMul=Math.pow(1+assetGrowthAnnual,1/12);let monthlyExpense=monthlyExpenseToday;let remaining=usdWealth;let months=0;while(months<maxMonths){remaining*=monthlyAssetMul;if(remaining<monthlyExpense)break;remaining-=monthlyExpense;monthlyExpense*=monthlyExpenseMul;months++;}out.hitCap=months>=maxMonths;out.years=Math.floor(months/12);out.months=months%12;let partialMonth=0;if(monthlyExpense>0&&remaining>0){partialMonth=remaining/monthlyExpense;if(partialMonth>0.999)partialMonth=0.999;if(partialMonth<0)partialMonth=0;}out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=months*4.345+(partialMonth*4.345);return out;}";
@@ -2364,22 +2363,39 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "finally{releaseCheckInFlight=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
   html += "}";
   html += "function validateManualFirmwareFile(){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){setFirmwareStatus('Choose a firmware .bin file first.','err');return false;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){setFirmwareStatus('Firmware file must end with .bin.','err');return false;}return true;}";
+  html += "const installSteps=[{ms:0,text:'Connecting to Wi-Fi...'},{ms:7000,text:'Checking GitHub for the latest release...'},{ms:14000,text:'Downloading firmware from GitHub...'},{ms:25000,text:'Installing firmware on device...'},{ms:37000,text:'Wrapping up... device will reboot shortly'}];";
+  html += "function startFirmwareProgress(){";
+  html += "if(!firmwareProgress)return;";
+  html += "firmwareProgressStart=Date.now();";
+  html += "firmwareProgress.classList.remove('hidden');";
+  html += "setFirmwareStatus('','info');";
+  html += "if(firmwareStepText)firmwareStepText.textContent=installSteps[0].text;";
+  html += "firmwareProgressInterval=setInterval(function(){";
+  html += "const elapsed=Date.now()-firmwareProgressStart;";
+  html += "let step=installSteps[0];";
+  html += "for(let i=1;i<installSteps.length;i++){if(elapsed>=installSteps[i].ms)step=installSteps[i];}";
+  html += "if(firmwareStepText)firmwareStepText.textContent=step.text;";
+  html += "},500);}";
+  html += "function stopFirmwareProgress(){";
+  html += "if(firmwareProgressInterval){clearInterval(firmwareProgressInterval);firmwareProgressInterval=null;}";
+  html += "if(firmwareProgress)firmwareProgress.classList.add('hidden');}";
   html += "async function installOnlineFirmware(){";
-  html += "if(!window.confirm('Install the latest Freedom Clock firmware now? Keep this phone connected until the device restarts.'))return;";
-  html += "if(firmwareInstallButton)firmwareInstallButton.disabled=true;";
-  html += "if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.add('hidden');";
+  html += "if(firmwareInstallInFlight)return;";
+  html += "firmwareInstallInFlight=true;";
+  html += "updateFirmwareInstallButton();";
   html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
-  html += "setReleaseStatus('Downloading and installing firmware. Keep this phone connected. The device will reboot when finished.','info');";
+  html += "startFirmwareProgress();";
+  html += "setReleaseStatus('Installing firmware from GitHub. Keep this phone connected. The device will reboot when finished.','info');";
   html += "try{";
   html += "const response=await fetch('/firmware-online',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
   html += "const data=await response.json();";
-  html += "if(handleUnlockRequired(data,setReleaseStatus)){updateFirmwareInstallButton();return;}";
-  html += "if(!data.ok){setReleaseStatus(data.message||'Firmware install failed.','err');updateFirmwareInstallButton();return;}";
-  html += "setReleaseStatus(data.message||'Firmware installed. Rebooting ...','ok');";
-  html += "}catch(err){setReleaseStatus('Firmware install request failed. Use manual update if the device does not restart.','err');updateFirmwareInstallButton();}";
-  html += "finally{if(releaseCheckButton)releaseCheckButton.disabled=false;}";
+  html += "if(handleUnlockRequired(data,setFirmwareStatus))return;";
+  html += "if(!data.ok){const message=data.message||'Firmware install failed.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');return;}";
+  html += "const message=data.message||'Firmware installed. Rebooting ...';setFirmwareStatus(message,'ok');setReleaseStatus(message,'ok');";
+  html += "}catch(err){const message='Firmware install request failed. Use manual update if the device does not restart.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');}";
+  html += "finally{stopFirmwareProgress();firmwareInstallInFlight=false;if(releaseCheckButton)releaseCheckButton.disabled=false;updateFirmwareInstallButton();}";
   html += "}";
-  html += "function installSelectedFirmware(){if(hasManualFirmwareFile()){if(!validateManualFirmwareFile())return;if(firmwareInstallButton)firmwareInstallButton.disabled=true;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.add('hidden');setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');if(firmwareForm)firmwareForm.submit();return;}if(onlineFirmwareAvailable){installOnlineFirmware();return;}setFirmwareStatus('Choose a firmware .bin file or check for a newer release first.','err');";
+  html += "function installSelectedFirmware(){if(hasManualFirmwareFile()){if(!validateManualFirmwareFile())return;if(firmwareInstallButton)firmwareInstallButton.disabled=true;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.add('hidden');setFirmwareStatus('Uploading firmware. Keep this phone connected until the device restarts.','info');if(firmwareForm)firmwareForm.submit();return;}if(onlineFirmwareAvailable){installOnlineFirmware();return;}const message='Choose a firmware .bin file or check for a newer release first.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');";
   html += "}";
   html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();invalidate();}";
   html += "if(asset) asset.addEventListener('change', update);";
@@ -3543,6 +3559,34 @@ static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, si
     return false;
   }
 
+  // Resolve any redirect first (GitHub release assets redirect to a CDN).
+  // The ESP32 HTTPClient does not reliably reconnect across different HTTPS
+  // hosts when following redirects, so we extract the Location header with a
+  // short probe request and download from the final URL directly.
+  String downloadUrl = firmwareUrl;
+  {
+    char resolveError[80];
+    TrustedWiFiClientSecure redirectClient;
+    if (configureTrustedTlsClient(redirectClient, resolveError, sizeof(resolveError))) {
+      HTTPClient httpProbe;
+      httpProbe.setTimeout(FIRMWARE_HTTP_TIMEOUT_MS);
+      httpProbe.setConnectTimeout(FIRMWARE_HTTP_TIMEOUT_MS);
+      httpProbe.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+      if (httpProbe.begin(redirectClient, firmwareUrl)) {
+        httpProbe.addHeader("Accept", "application/octet-stream");
+        httpProbe.addHeader("User-Agent", "FreedomClock/2026");
+        const int probeCode = httpProbe.GET();
+        if (probeCode >= 301 && probeCode <= 308) {
+          const String& location = httpProbe.getLocation();
+          if (location.startsWith("https://") || location.startsWith("http://")) {
+            downloadUrl = location;
+          }
+        }
+        httpProbe.end();
+      }
+    }
+  }
+
   TrustedWiFiClientSecure secureClient;
   if (!configureTrustedTlsClient(secureClient, errorBuf, errorBufSize)) {
     return false;
@@ -3550,8 +3594,9 @@ static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, si
 
   HTTPClient http;
   http.setTimeout(FIRMWARE_HTTP_TIMEOUT_MS);
-  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-  if (!http.begin(secureClient, firmwareUrl)) {
+  http.setConnectTimeout(FIRMWARE_HTTP_TIMEOUT_MS);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  if (!http.begin(secureClient, downloadUrl)) {
     snprintf(errorBuf, errorBufSize, "Could not start firmware download.");
     return false;
   }
@@ -3561,7 +3606,12 @@ static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, si
 
   const int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
-    snprintf(errorBuf, errorBufSize, "Firmware download failed (%d).", httpCode);
+    const String httpError = http.errorToString(httpCode);
+    if (httpError.length() > 0) {
+      snprintf(errorBuf, errorBufSize, "Firmware download failed (%d: %s).", httpCode, httpError.c_str());
+    } else {
+      snprintf(errorBuf, errorBufSize, "Firmware download failed (%d).", httpCode);
+    }
     http.end();
     return false;
   }
