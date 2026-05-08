@@ -22,3 +22,9 @@ static const char* MQTT_PASS     = "YOUR_MQTT_PASSWORD";
 // Battery stats logging is enabled by default.
 // Set to 0 only if you do not want the setup page to collect calibration samples.
 // #define LOG_BATTERY_STATS 0
+
+// Skip the first-boot welcome screen and go straight to the setup portal on
+// unconfigured boot. Enable this during development so a factory reset or
+// erase does not leave the device sleeping on the "Press any button" screen.
+// Never enable on production builds shipped to customers.
+// #define SKIP_WELCOME_SCREEN 1

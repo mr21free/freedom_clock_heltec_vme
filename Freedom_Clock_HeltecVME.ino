@@ -15,6 +15,7 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "driver/rtc_io.h"
+#include "qrcode.h"
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -191,7 +192,7 @@ static constexpr char BATTERY_LOG_NAMESPACE[] = "batlog";
 static constexpr uint32_t CONFIG_VERSION = 1;
 static constexpr uint32_t HISTORY_VERSION = 2;
 static constexpr uint32_t BATTERY_LOG_VERSION = 1;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.07.2"
+static constexpr char FIRMWARE_VERSION[] = "2026.05.08.1";
 static constexpr char GITHUB_REPO_SLUG[] = "mr21free/freedom_clock_heltec_vme";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme/releases";
 static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme/releases/latest";
@@ -226,6 +227,7 @@ static constexpr int32_t PRICE_HISTORY_EMPTY = INT32_MIN;
 static constexpr int64_t BALANCE_HISTORY_EMPTY = INT64_MIN;
 RTC_DATA_ATTR uint32_t setupPinFailedAttempts = 0;
 RTC_DATA_ATTR time_t setupPinLockedUntil = 0;
+RTC_DATA_ATTR bool rtcFactoryResetPending = false;
 
 // ============================================================
 // Globals
@@ -2027,6 +2029,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += ".install-progress{display:flex;align-items:center;gap:12px;padding:14px 16px;border-radius:14px;background:#fff8ef;border:1.5px solid #f7931a;margin-top:14px;}";
   html += ".install-spinner{flex-shrink:0;width:20px;height:20px;border:2.5px solid rgba(247,147,26,.25);border-top-color:#f7931a;border-radius:50%;animation:fc-spin .9s linear infinite;}";
   html += ".install-step{font-size:14px;color:#2b1700;font-weight:600;line-height:1.4;}";
+  html += ".save-overlay{position:fixed;inset:0;background:rgba(253,251,246,.94);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:9999;}";
+  html += ".save-overlay-spinner{width:36px;height:36px;border:3.5px solid rgba(247,147,26,.25);border-top-color:#f7931a;border-radius:50%;animation:fc-spin .9s linear infinite;}";
+  html += ".save-overlay-text{font-size:17px;font-weight:700;color:#2b1700;text-align:center;line-height:1.6;}";
   html += "textarea{width:100%;box-sizing:border-box;min-height:180px;padding:11px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;background:#fdfbf6;color:#171717;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.45;}";
   html += "button{border:none;border-radius:999px;padding:13px 18px;font-size:16px;font-weight:700;cursor:pointer;background:#f7931a;color:#2b1700;touch-action:manipulation;}";
   html += "button.small{padding:10px 14px;font-size:16px;}";
@@ -2036,7 +2041,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "a.extlink:hover,a.extlink:focus{text-decoration:underline;}";
   html += ".subtle{font-size:13px;color:#645c53;}";
   html += "@media (max-width:640px){.hero h1{font-size:25px;}}";
-  html += "</style></head><body><div id=\"focus_guard\" tabindex=\"-1\" aria-hidden=\"true\" style=\"position:fixed;top:0;left:0;width:1px;height:1px;outline:none;\"></div><div class=\"wrap\">";
+  html += "</style></head><body><div id=\"focus_guard\" tabindex=\"-1\" aria-hidden=\"true\" style=\"position:fixed;top:0;left:0;width:1px;height:1px;outline:none;\"></div>";
+  html += "<div id=\"save_overlay\" class=\"save-overlay hidden\"><div class=\"save-overlay-spinner\"></div><div id=\"save_overlay_text\" class=\"save-overlay-text\">Saving settings...</div></div>";
+  html += "<div class=\"wrap\">";
   html += "<section class=\"hero\"><h1>Freedom Clock Setup</h1>";
   html += "<p>Hold 21 button for about 5 seconds to enter setup mode, or keep holding the button for about 10 seconds to clear all settings (factory reset).</p>";
   html += "<div class=\"meta\">";
@@ -2139,8 +2146,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String("<div><label for=\"topic_price_usd\">BTC price topic</label><input id=\"topic_price_usd\" name=\"topic_price_usd\" maxlength=\"95\" value=\"") + htmlEscape(cfg.topicPriceUsd) + "\"></div>";
   html += String("<div><label for=\"topic_balance_btc\">BTC balance topic</label><input id=\"topic_balance_btc\" name=\"topic_balance_btc\" maxlength=\"95\" value=\"") + htmlEscape(cfg.topicBalanceBtc) + "\"></div>";
   html += "</div></section>";
-  html += "<div class=\"actions form-actions\"><button id=\"validate_button\" type=\"button\">Test Connection</button><button id=\"save_button\" type=\"submit\" disabled>Save</button></div>";
+  html += "<div class=\"actions form-actions\"><button id=\"validate_button\" type=\"button\">Validate</button><button id=\"save_button\" type=\"submit\" disabled>Save</button></div>";
   html += "<div id=\"validation_status\" class=\"message info\" style=\"display:none;\"></div>";
+  html += "<div id=\"validate_progress\" class=\"hidden\"><div class=\"install-progress\"><div class=\"install-spinner\"></div><div id=\"validate_step_text\" class=\"install-step\">Testing...</div></div></div>";
   html += "</form>";
 
   html += "<section class=\"card\" style=\"margin-top:16px;\"><h2>Battery Calibration Log</h2>";
@@ -2159,6 +2167,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += DEVICE_MODEL_NAME;
   html += "</div></div><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check for Update</button></div>";
   html += "<div id=\"release_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+  html += "<div id=\"release_progress\" class=\"hidden\"><div class=\"install-progress\" style=\"margin-top:14px;\"><div class=\"install-spinner\"></div><div id=\"release_step_text\" class=\"install-step\">Checking...</div></div></div>";
   html += "<div id=\"release_summary\" class=\"releasebox hidden\">";
   html += "<div class=\"row\"><strong>Latest release:</strong> <span id=\"release_latest_version\">--</span></div>";
   html += "<div class=\"row\"><strong>Notes:</strong></div>";
@@ -2208,8 +2217,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const firmwareStatus=document.getElementById('firmware_status');";
   html += "const firmwareProgress=document.getElementById('firmware_progress');";
   html += "const firmwareStepText=document.getElementById('firmware_step_text');";
+  html += "const validateProgress=document.getElementById('validate_progress');";
+  html += "const validateStepText=document.getElementById('validate_step_text');";
   html += "const releaseCheckButton=document.getElementById('release_check_button');";
   html += "const releaseStatus=document.getElementById('release_status');";
+  html += "const releaseProgress=document.getElementById('release_progress');";
+  html += "const releaseStepText=document.getElementById('release_step_text');";
   html += "const releaseSummary=document.getElementById('release_summary');";
   html += "const releaseLatestVersion=document.getElementById('release_latest_version');";
   html += "const releaseNotes=document.getElementById('release_notes');";
@@ -2244,6 +2257,10 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "let firmwareInstallInFlight=false;";
   html += "let firmwareProgressInterval=null;";
   html += "let firmwareProgressStart=0;";
+  html += "let validateProgressInterval=null;";
+  html += "let validateProgressStart=0;";
+  html += "let releaseProgressInterval=null;";
+  html += "let releaseProgressStart=0;";
   html += "['pointerdown','touchstart','keydown'].forEach(function(name){window.addEventListener(name,function(){setupUserInteracted=true;},{once:true,passive:true});});";
   html += "function signature(){return form?new URLSearchParams(new FormData(form)).toString():'';}";
   html += "function setStatus(text,kind){if(!statusBox)return;if(!text){statusBox.style.display='none';statusBox.textContent='';statusBox.className='message info';return;}statusBox.textContent=text;statusBox.className='message '+(kind||'info');statusBox.style.display='block';}";
@@ -2264,7 +2281,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function sanitizeNumberInput(el){if(!el)return;const mode=el.getAttribute('data-number')||'decimal';let value=String(el.value||'').replace(/,/g,'.');if(mode==='int'){el.value=value.replace(/[^0-9]/g,'');return;}value=value.replace(/[^0-9.]/g,'');const firstDot=value.indexOf('.');if(firstDot!==-1){value=value.slice(0,firstDot+1)+value.slice(firstDot+1).replace(/[.]/g,'');}el.value=value;}";
   html += "function wireNumberInputs(){document.querySelectorAll('[data-number]').forEach(function(el){sanitizeNumberInput(el);el.addEventListener('input',function(){sanitizeNumberInput(el);});el.addEventListener('paste',function(){setTimeout(function(){sanitizeNumberInput(el);},0);});});}";
   html += "function normalizeVersion(text){return String(text||'').trim().replace(/^v/i,'');}";
-  html += "async function copyText(text,label){const value=String(text||'').trim();if(!value){setReleaseStatus('Nothing to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{const area=document.createElement('textarea');area.value=value;area.setAttribute('readonly','');area.style.position='fixed';area.style.left='-9999px';document.body.appendChild(area);area.select();document.execCommand('copy');document.body.removeChild(area);}setReleaseStatus((label||'Link')+' copied. If iOS blocks clipboard access, select the URL text manually.','ok');}catch(err){setReleaseStatus('Copy failed. Select the URL text manually and copy it from there.','err');}}";
+  html += "async function copyText(text,label,btn){const value=String(text||'').trim();if(!value){if(!btn)setReleaseStatus('Nothing to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{const area=document.createElement('textarea');area.value=value;area.setAttribute('readonly','');area.style.position='fixed';area.style.left='-9999px';document.body.appendChild(area);area.select();document.execCommand('copy');document.body.removeChild(area);}if(btn){const orig=btn.textContent;btn.textContent='✓ Copied';btn.disabled=true;setTimeout(function(){btn.textContent=orig;btn.disabled=false;},2500);}else{setReleaseStatus((label||'Link')+' copied. If iOS blocks clipboard access, select the URL text manually.','ok');}}catch(err){if(!btn)setReleaseStatus('Copy failed. Select the URL text manually and copy it from there.','err');}}";
   html += "async function copyBatteryLog(){const value=String((batteryLogText&&batteryLogText.value)||'').trim();if(!value){setBatteryLogStatus('No battery log to copy yet.','err');return;}try{if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(value);}else{batteryLogText.focus();batteryLogText.select();document.execCommand('copy');}setBatteryLogStatus('Battery log copied.','ok');}catch(err){setBatteryLogStatus('Copy failed. Select the log text manually and copy it.','err');}}";
   html += "function hasManualFirmwareFile(){return !!(firmwareFileInput&&firmwareFileInput.files&&firmwareFileInput.files.length>0);}";
   html += "function updateFirmwareInstallButton(){const enabled=!!(onlineFirmwareAvailable||hasManualFirmwareFile());if(firmwareInstallButton)firmwareInstallButton.disabled=!enabled||firmwareInstallInFlight;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.toggle('hidden',!enabled||firmwareInstallInFlight);}";
@@ -2327,7 +2344,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "validatedSignature='';";
   html += "if(saveButton)saveButton.disabled=true;";
   html += "if(scanButton)scanButton.disabled=true;";
-  html += "setStatus('Testing current settings. This can take a few seconds...','info');";
+  html += "startValidateProgress();";
   html += "try{";
   html += "const response=await fetch('/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:new URLSearchParams(new FormData(form)).toString(),cache:'no-store'});";
   html += "const data=await response.json();";
@@ -2340,7 +2357,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(saveButton)saveButton.disabled=false;";
   html += "setStatus(data.message||'Validation successful.','ok');";
   html += "}catch(err){setStatus('Validation request failed. Keep this phone connected to the device Wi-Fi and try again.','err');}";
-  html += "finally{validationInFlight=false;if(scanButton)scanButton.disabled=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
+  html += "finally{stopValidateProgress();validationInFlight=false;if(scanButton)scanButton.disabled=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
   html += "}";
   html += "async function checkLatestRelease(event){";
   html += "if(event){event.preventDefault();event.stopPropagation();}";
@@ -2352,7 +2369,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "focusWithoutScroll(actionButton);";
   html += "window.scrollTo(0,previousScrollY);";
   html += "hideReleaseSummary();";
-  html += "setReleaseStatus('Checking GitHub for the latest published release. This can take a few seconds...','info');";
+  html += "startReleaseProgress();";
   html += "try{";
   html += "const response=await fetch('/release-info',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
   html += "const data=await response.json();";
@@ -2360,7 +2377,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(!data.ok){setReleaseStatus(data.message||'Could not load release info.','err');return;}";
   html += "renderReleaseInfo(data);";
   html += "}catch(err){setReleaseStatus('Release check failed. Keep this phone connected and make sure the device can reach the internet over Wi-Fi.','err');}";
-  html += "finally{releaseCheckInFlight=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
+  html += "finally{stopReleaseProgress();releaseCheckInFlight=false;restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}";
   html += "}";
   html += "function validateManualFirmwareFile(){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){setFirmwareStatus('Choose a firmware .bin file first.','err');return false;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){setFirmwareStatus('Firmware file must end with .bin.','err');return false;}return true;}";
   html += "const installSteps=[{ms:0,text:'Connecting to Wi-Fi...'},{ms:7000,text:'Checking GitHub for the latest release...'},{ms:14000,text:'Downloading firmware from GitHub...'},{ms:25000,text:'Installing firmware on device...'},{ms:37000,text:'Wrapping up... device will reboot shortly'}];";
@@ -2379,6 +2396,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function stopFirmwareProgress(){";
   html += "if(firmwareProgressInterval){clearInterval(firmwareProgressInterval);firmwareProgressInterval=null;}";
   html += "if(firmwareProgress)firmwareProgress.classList.add('hidden');}";
+  html += "const validateSteps=[{ms:0,text:'Validating settings...'}];";
+  html += "function startValidateProgress(){if(!validateProgress)return;validateProgressStart=Date.now();validateProgress.classList.remove('hidden');setStatus('','info');if(validateStepText)validateStepText.textContent=validateSteps[0].text;validateProgressInterval=setInterval(function(){const elapsed=Date.now()-validateProgressStart;let step=validateSteps[0];for(let i=1;i<validateSteps.length;i++){if(elapsed>=validateSteps[i].ms)step=validateSteps[i];}if(validateStepText)validateStepText.textContent=step.text;},500);}";
+  html += "function stopValidateProgress(){if(validateProgressInterval){clearInterval(validateProgressInterval);validateProgressInterval=null;}if(validateProgress)validateProgress.classList.add('hidden');}";
+  html += "const releaseSteps=[{ms:0,text:'Checking for updates...'}];";
+  html += "function startReleaseProgress(){if(!releaseProgress)return;releaseProgressStart=Date.now();releaseProgress.classList.remove('hidden');setReleaseStatus('','info');if(releaseStepText)releaseStepText.textContent=releaseSteps[0].text;releaseProgressInterval=setInterval(function(){const elapsed=Date.now()-releaseProgressStart;let step=releaseSteps[0];for(let i=1;i<releaseSteps.length;i++){if(elapsed>=releaseSteps[i].ms)step=releaseSteps[i];}if(releaseStepText)releaseStepText.textContent=step.text;},500);}";
+  html += "function stopReleaseProgress(){if(releaseProgressInterval){clearInterval(releaseProgressInterval);releaseProgressInterval=null;}if(releaseProgress)releaseProgress.classList.add('hidden');}";
   html += "async function installOnlineFirmware(){";
   html += "if(firmwareInstallInFlight)return;";
   html += "firmwareInstallInFlight=true;";
@@ -2406,11 +2429,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(wifiPassInput) wifiPassInput.addEventListener('input', function(){if(clearWifiPass&&wifiPassInput.value)clearWifiPass.checked=false;});";
   html += "if(mqttPassInput) mqttPassInput.addEventListener('input', function(){if(clearMqttPass&&mqttPassInput.value)clearMqttPass.checked=false;});";
   html += "if(wifiSelect) wifiSelect.addEventListener('change', function(){if(wifiSsidInput)wifiSsidInput.value=wifiSelect.value||'';invalidate();});";
-  html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', function(event){if(!validatedSignature||(saveButton&&saveButton.disabled)){event.preventDefault();setStatus('Please test the current settings before saving.','err');}});}";
+  html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', async function(event){event.preventDefault();if(!validatedSignature||(saveButton&&saveButton.disabled)){setStatus('Please test the current settings before saving.','err');return;}const saveOverlay=document.getElementById('save_overlay');const saveOverlayText=document.getElementById('save_overlay_text');if(saveOverlay)saveOverlay.classList.remove('hidden');if(saveButton)saveButton.disabled=true;if(saveOverlayText)saveOverlayText.textContent='Saving settings…';try{const params=new URLSearchParams(new FormData(form));params.set('_fc_fetch','1');const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'});const data=await response.json();if(data.ok){if(saveOverlayText)saveOverlayText.innerHTML='Settings saved!<br>Device is restarting…';}else{if(saveOverlay)saveOverlay.classList.add('hidden');if(saveButton)saveButton.disabled=false;setStatus(data.error||'Failed to save settings.','err');}}catch(err){if(saveOverlayText)saveOverlayText.innerHTML='Settings saved!<br>Device is restarting…';}});}";
   html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){setFirmwareStatus('', 'info');updateFirmwareInstallButton();});";
   html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
   html += "if(firmwareInstallButton) firmwareInstallButton.addEventListener('click', installSelectedFirmware);";
-  html += "if(copyLatestReleaseUrlButton) copyLatestReleaseUrlButton.addEventListener('click', function(){copyText(latestReleaseUrlText?latestReleaseUrlText.textContent:'','Latest release URL');});";
+  html += "if(copyLatestReleaseUrlButton) copyLatestReleaseUrlButton.addEventListener('click', function(){copyText(latestReleaseUrlText?latestReleaseUrlText.textContent:'','Latest release URL',copyLatestReleaseUrlButton);});";
   html += "if(copyBatteryLogButton) copyBatteryLogButton.addEventListener('click', copyBatteryLog);";
   html += "if(scanButton) scanButton.addEventListener('click', refreshWifiList);";
   html += "if(validateButton) validateButton.addEventListener('click', validateCurrentSettings);";
@@ -2498,6 +2521,50 @@ static void drawBatteryStatus(int deviceBatteryPct, DisplayThemeMode themeMode) 
   display.print(pctText);
 }
 
+static void markWelcomeShown() {
+  if (!preferences.begin(CONFIG_NAMESPACE, false)) return;
+  preferences.putBool("welcome_seen", true);
+  preferences.end();
+}
+
+static bool hasWelcomeBeenShown() {
+  if (!preferences.begin(CONFIG_NAMESPACE, true)) return false;
+  const bool seen = preferences.getBool("welcome_seen", false);
+  preferences.end();
+  return seen;
+}
+
+static void drawWelcomeScreen() {
+  prepareScreen(DISPLAY_THEME_LIGHT);
+
+  static constexpr int TITLE_SIZE = 2;
+  static constexpr int TITLE_CHAR_W = 6 * TITLE_SIZE;
+  static constexpr int TITLE_CHAR_H = 8 * TITLE_SIZE;
+  static constexpr int TITLE_LEN = 13; // "FREEDOM CLOCK"
+  static constexpr int SUB_LEN = 25;   // "Press any button to begin"
+
+  const int centerY = DEVICE_DISPLAY_HEIGHT / 2;
+  const int titleX = (DEVICE_DISPLAY_WIDTH - TITLE_LEN * TITLE_CHAR_W) / 2;
+  const int titleY = centerY - TITLE_CHAR_H - 4;
+  display.setTextSize(TITLE_SIZE);
+  display.setCursor(titleX, titleY);
+  display.print("FREEDOM CLOCK");
+
+  const int subX = (DEVICE_DISPLAY_WIDTH - SUB_LEN * 6) / 2;
+  display.setTextSize(1);
+  display.setCursor(subX, centerY + 4);
+  display.print("Press any button to begin");
+
+  display.update();
+}
+
+static void goToWelcomeSleep() {
+  rtc_gpio_pullup_en((gpio_num_t)PIN_USER_BUTTON);
+  rtc_gpio_pulldown_dis((gpio_num_t)PIN_USER_BUTTON);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_USER_BUTTON, 0);
+  esp_deep_sleep_start();
+}
+
 static void drawPortalScreen(
   const char* title,
   const char* line1,
@@ -2527,30 +2594,61 @@ static void drawPortalScreen(
   display.update();
 }
 
-static void drawSetupPortalReadyScreen() {
-  static constexpr int LABEL_X = 8;
-  static constexpr int SSID_ROW_Y = 48;
-  static constexpr int PASS_ROW_Y = 68;
+static void portalQrRenderCallback(esp_qrcode_handle_t qrcode) {
+  static constexpr int QUIET_PX = 4;
+  const int modules = esp_qrcode_get_size(qrcode);
+  // Fit the QR code within the display height leaving a small top/bottom margin.
+  int modulePx = (DEVICE_DISPLAY_HEIGHT - 8 - 2 * QUIET_PX) / modules;
+  if (modulePx < 2) modulePx = 2;
+  if (modulePx > 4) modulePx = 4;
+  const int contentPx = modules * modulePx;
+  const int totalPx = contentPx + 2 * QUIET_PX;
+  const int originX = DEVICE_DISPLAY_WIDTH - totalPx - 3;
+  const int originY = (DEVICE_DISPLAY_HEIGHT - totalPx) / 2;
+  display.fillRect(originX, originY, totalPx, totalPx, WHITE);
+  for (int row = 0; row < modules; row++) {
+    for (int col = 0; col < modules; col++) {
+      if (esp_qrcode_get_module(qrcode, col, row)) {
+        display.fillRect(
+          originX + QUIET_PX + col * modulePx,
+          originY + QUIET_PX + row * modulePx,
+          modulePx, modulePx, BLACK
+        );
+      }
+    }
+  }
+}
 
+static void drawSetupPortalReadyScreen() {
   prepareScreen(DISPLAY_THEME_LIGHT);
+
   display.setTextSize(2);
   display.setCursor(8, 8);
-  display.print("FREEDOM CLOCK SETUP");
+  display.print("SETUP");
 
   display.setTextSize(1);
-  display.setCursor(LABEL_X, SSID_ROW_Y);
-  display.print("Join Wi-Fi:");
-  const int valueX = display.getCursorX() + 6;
-  display.setCursor(valueX, SSID_ROW_Y);
-  display.print(portalApSsid);
+  display.setCursor(8, 34);
+  display.print("Scan QR to join Wi-Fi,");
+  display.setCursor(8, 48);
+  display.print("then open 192.168.4.1");
 
-  display.setCursor(LABEL_X, PASS_ROW_Y);
-  display.print("Password:");
-  display.setCursor(valueX, PASS_ROW_Y);
+  display.setCursor(8, 68);
+  display.print("Wi-Fi:");
+  display.setCursor(8, 80);
+  display.print(portalApSsid);
+  display.setCursor(8, 96);
+  display.print("PW: ");
   display.print(portalApPassword);
 
-  display.setCursor(8, 106);
-  display.print("Open http://192.168.4.1 in a browser.");
+  char qrData[96];
+  snprintf(qrData, sizeof(qrData), "WIFI:T:WPA;S:%s;P:%s;;", portalApSsid, portalApPassword);
+  esp_qrcode_config_t qrCfg = {
+    .display_func = portalQrRenderCallback,
+    .max_qrcode_version = 5,
+    .qrcode_ecc_level = ESP_QRCODE_ECC_LOW
+  };
+  esp_qrcode_generate(&qrCfg, qrData);
+
   display.update();
 }
 
@@ -3391,6 +3489,8 @@ static void handlePortalSave() {
     return;
   }
 
+  const bool isFetch = portalServer.arg("_fc_fetch") == "1";
+
   DeviceConfig submitted = deviceConfig;
   char errorMessage[128];
   const bool requestedPinEnabled = portalServer.arg("setup_pin_enabled").toInt() == 1;
@@ -3400,20 +3500,33 @@ static void handlePortalSave() {
   loadSubmittedPortalConfig(submitted);
   const bool sourceChanged = didHistorySourceChange(deviceConfig, submitted);
 
+  auto sendSaveError = [&](const char* msg) {
+    if (isFetch) {
+      String json = F("{\"ok\":false,\"error\":\"");
+      String escaped = msg;
+      escaped.replace("\"", "\\\"");
+      json += escaped;
+      json += F("\"}");
+      portalServer.send(200, "application/json", json);
+    } else {
+      portalSendHtml(buildPortalPage(submitted, msg, true));
+    }
+  };
+
   if (!validateDeviceConfig(submitted, errorMessage, sizeof(errorMessage))) {
-    portalSendHtml(buildPortalPage(submitted, errorMessage, true));
+    sendSaveError(errorMessage);
     return;
   }
 
   if (!validatePortalPinSettings(deviceConfig, requestedPinEnabled, requestedPin, requestedPinConfirm, errorMessage, sizeof(errorMessage))) {
-    portalSendHtml(buildPortalPage(submitted, errorMessage, true));
+    sendSaveError(errorMessage);
     return;
   }
 
   applyPortalPinSettings(submitted, deviceConfig, requestedPinEnabled, requestedPin);
 
   if (!saveDeviceConfig(submitted)) {
-    portalSendHtml(buildPortalPage(submitted, "Failed to save settings to device storage.", true));
+    sendSaveError("Failed to save settings to device storage.");
     return;
   }
 
@@ -3426,10 +3539,11 @@ static void handlePortalSave() {
   }
   portalExitAction = PORTAL_EXIT_ACTION_SAVE_CONFIG;
   portalSaveRequested = true;
-  portalSendHtml(buildPortalConfirmationPage(
-    "SETTINGS SAVED",
-    "Rebooting ..."
-  ));
+  if (isFetch) {
+    portalServer.send(200, "application/json", F("{\"ok\":true}"));
+  } else {
+    portalSendHtml(buildPortalConfirmationPage("SETTINGS SAVED", "Rebooting ..."));
+  }
 }
 
 static void handlePortalFirmwareUpload() {
@@ -4607,15 +4721,33 @@ void setup() {
     clearBatteryLogInMemory(batteryLog);
     clearWealthHistoryInMemory(wealthHistory);
     applyDefaultDeviceConfig(deviceConfig);
-    safeCopyCString(portalSessionMessage, sizeof(portalSessionMessage), "Factory reset complete. Showing default values below.");
+    rtcFactoryResetPending = true;
     drawSetupPortalResetScreen();
     delay(900);
-    runConfigurationPortal();
+    drawWelcomeScreen();
+    goToWelcomeSleep();
   }
 
   bool configLoaded = loadDeviceConfig(deviceConfig);
-  bool shouldRunPortal = !configLoaded || (bootAction == SETUP_BOOT_ACTION_PORTAL);
-  if (shouldRunPortal) {
+  if (!configLoaded) {
+#ifdef SKIP_WELCOME_SCREEN
+    const bool welcomeShown = true;
+#else
+    const bool welcomeShown = hasWelcomeBeenShown();
+#endif
+    if (welcomeShown) {
+      if (rtcFactoryResetPending) {
+        rtcFactoryResetPending = false;
+        safeCopyCString(portalSessionMessage, sizeof(portalSessionMessage), "Factory reset complete. Showing default values below.");
+      }
+      runConfigurationPortal();
+    } else {
+      markWelcomeShown();
+      drawWelcomeScreen();
+      goToWelcomeSleep();
+    }
+  }
+  if (bootAction == SETUP_BOOT_ACTION_PORTAL) {
     runConfigurationPortal();
   }
 
