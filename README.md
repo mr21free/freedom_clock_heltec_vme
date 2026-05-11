@@ -4,8 +4,8 @@ Freedom Clock is a low-power e-ink device that turns savings into time. It is bu
 
 The current firmware supports both Heltec Vision Master E-series boards:
 
+- Heltec Vision Master E290 (recommended)
 - Heltec Vision Master E213
-- Heltec Vision Master E290
 
 Both boards use the same source code and release line. The firmware selects the right display driver and layout at compile time based on the board selected in Arduino IDE.
 
@@ -40,8 +40,8 @@ MQTT mode is best for bitcoiners who already run local infrastructure, for examp
 
 ## Supported Hardware
 
+- Heltec Vision Master E290, 2.90 inch e-ink display, `296 x 128` (recommended)
 - Heltec Vision Master E213, 2.13 inch e-ink display, `250 x 122`
-- Heltec Vision Master E290, 2.90 inch e-ink display, `296 x 128`
 - ESP32-S3
 - optional, but recommended, 3.7V LiPo battery
 
