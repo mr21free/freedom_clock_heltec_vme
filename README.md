@@ -2,6 +2,8 @@
 
 Freedom Clock is a low-power e-ink device that turns savings into time. It is built for anyone who wants a calm, local-first view of freedom coverage instead of another price-anxiety dashboard.
 
+![Freedom Clock main screen on E290](photos/freedom_clock_e290_main.jpeg)
+
 The current firmware supports both Heltec Vision Master E-series boards:
 
 - Heltec Vision Master E290 (recommended)
@@ -9,24 +11,23 @@ The current firmware supports both Heltec Vision Master E-series boards:
 
 Both boards use the same source code and release line. The firmware selects the right display driver and layout at compile time based on the board selected in Arduino IDE.
 
-## Photos
-
-![Freedom Clock main screen on E213](photos/freedomclock_showcase_screen_1_E213.jpeg)
-
-![Freedom Clock main screen on E290](photos/freedomclock_showcase_screen_1_E290.jpeg)
-
-![Freedom Clock freedom change screen on E213](photos/freedomclock_showcase_screen_2_E213.jpeg)
-
-![Freedom Clock wealth change screen on E213](photos/freedomclock_showcase_screen_3_E213.jpeg)
-
-![Freedom Clock settings screen on E213](photos/freedomclock_showcase_screen_4_E213.jpeg)
-
 ## What It Shows
 
-- Screen 1: expected freedom time, expected lifetime left, and freedom coverage.
+- Screen 1: expected freedom time, expected lifetime left, and freedom coverage. Optionally, it can show motivational quote.
+
+![Freedom Clock main screen with quote on E290](photos/freedom_clock_e290_main_quote.jpeg)
+
 - Screen 2: freedom change, opened with one `21 / GPIO21` button press.
+
+![Freedom Clock freedom change screen on E290](photos/freedom_clock_e290_freedom_change.jpeg)
+
 - Screen 3: current wealth and wealth change, opened with two quick `21` presses.
+
+![Freedom Clock wealth change screen on E290](photos/freedom_clock_e290_wealth_change.jpeg)
+
 - Screen 4: settings and input parameters, opened with three quick `21` presses.
+
+![Freedom Clock settings screen on E290](photos/freedom_clock_e290_settings.jpeg)
 
 ## Portfolio Modes
 
@@ -40,30 +41,22 @@ MQTT mode is best for bitcoiners who already run local infrastructure, for examp
 
 ## Supported Hardware
 
-- Heltec Vision Master E290, 2.90 inch e-ink display, `296 x 128` (recommended)
-- Heltec Vision Master E213, 2.13 inch e-ink display, `250 x 122`
-- ESP32-S3
-- optional, but recommended, 3.7V LiPo battery
-
-Optional night reading/front-light notes live in [docs/FRONTLIGHT.md](docs/FRONTLIGHT.md).
+- Heltec Vision Master E290, 2.90" display, `296 x 128` (recommended) (https://heltec.org/project/vision-master-e290/)
+- OR Heltec Vision Master E213, 2.13" display, `250 x 122` (https://heltec.org/project/vision-master-e213/)
+- optional, but recommended, 3.7V LiPo battery, 803040 with PH 1.25 Connection (e.g. https://www.amazon.de/-/en/dp/B0DPZLNQ2C?ref=ppx_yo2ov_dt_b_fed_asin_title&th=1)
+- optional night reading / front-light notes live in [docs/FRONTLIGHT.md](docs/FRONTLIGHT.md), not tested yet
 
 ## First Setup
 
 On first boot, or after factory reset, the device creates a setup Wi-Fi network:
 
-```text
-Freedom_Clock_<DEVICE_ID>
-```
-
-Join it with the setup password shown on the e-ink screen and open:
-
-```text
-http://192.168.4.1
-```
+![Freedom Clock setup screen on E290](photos/freedom_clock_e290_setup.jpeg)
 
 The setup Wi-Fi password is stable per device and is shown on the e-ink screen.
 
 The setup page lets you configure owner, life expectancy, portfolio model, Wi-Fi, MQTT, display theme, refresh interval, optional setup PIN, and firmware updates.
+
+![Freedom Clock setup screen on phone](photos/freedom_clock_e290_setup_phone.jpeg)
 
 To reopen setup later, hold the `21 / GPIO21` button while waking the device and release after about 5 seconds. To factory reset, keep holding for about 10 seconds.
 
@@ -131,14 +124,21 @@ Saved settings and daily history stay on the device during a normal firmware upd
 
 ## Build And Flash
 
-1. Install Arduino IDE.
-2. Install Heltec ESP32 board support.
+1. Install Arduino IDE (https://support.arduino.cc/hc/en-us/articles/360019833020-Download-and-install-Arduino-IDE).
+2. Install board support in LIBRARY MANAGER of Arduino
+   - heltec-eink-moduled by Todd Herbert
+   - Heltec ESP32 Dev-Boards
+   - PubSubClient by Nick O'Leary
+   - ArduinoJson by Benoit Blanchon
+   - Adafruit GFX Library by Adafruit 
 3. Open [Freedom_Clock_HeltecVME.ino](Freedom_Clock_HeltecVME.ino).
-4. Select your board:
+4. Connect your board via USB to your computer. Select the right device in Tools > Port (usually /dev/cu.usbmodem1101)
+5. Select your board in Tools > Board
    - `Heltec Vision Master E213` for E213
    - `Heltec Vision Master E290` for E290
-5. Flash the device.
-6. Join the device setup Wi-Fi and configure it in the browser.
+6. Upload the code.
+7. Press RST button on the device to wake it up once the code starts uploading 
+8. Join the device setup Wi-Fi and configure it in the browser
 
 Important: each board needs firmware compiled for that exact board profile. Do not flash an E213 `.bin` onto an E290 or the other way around.
 
@@ -152,7 +152,7 @@ Use [secrets.example.h](secrets.example.h) as the template.
 
 ## Developer Test History
 
-To generate fake daily history for reviewing screens 3 and 4, temporarily add this to local `secrets.h`, flash once, then remove it again:
+To generate fake daily history for reviewing freedom and wealth change screens, temporarily add this to local `secrets.h`, flash once, then remove it again:
 
 ```cpp
 #define ENABLE_TEST_HISTORY 1
