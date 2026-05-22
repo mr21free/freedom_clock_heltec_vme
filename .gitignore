@@ -1,6 +1,7 @@
 .DS_Store
 **/.DS_Store
 secrets.h
+secrets-empty.h
 .env
 .env.*
 *.pem
@@ -10,6 +11,7 @@ secrets.h
 provisioning-workdir/
 freedom-clock-setup-preview.html
 freedom-clock-test-environment.html
+freedom_clock_e290_*.svg
 dev-local/
 __pycache__/
 *.pyc

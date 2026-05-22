@@ -49,6 +49,11 @@ The Arduino sketch is device-neutral:
 ```text
 Freedom_Clock_HeltecVME/
   Freedom_Clock_HeltecVME.ino
+  src/
+    config.h
+    display_screens.h
+    setup_portal.h
+    ...
 ```
 
 The original E213-specific filename was retired after E290 hardware testing, so Arduino IDE users can open one sketch for both supported devices.

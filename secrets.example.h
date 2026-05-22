@@ -4,13 +4,13 @@
 // These stay inactive unless you also opt in with:
 // #define USE_SECRETS_BOOTSTRAP 1
 
-static const char* WIFI_SSID     = "YOUR_WIFI_NAME";
-static const char* WIFI_PASS     = "YOUR_WIFI_PASSWORD";
+#define FREEDOM_WIFI_SSID "YOUR_WIFI_NAME"
+#define FREEDOM_WIFI_PASS "YOUR_WIFI_PASSWORD"
 
-static const char* MQTT_SERVER   = "mqtt.local";
-static const int   MQTT_PORT     = 1883;
-static const char* MQTT_USER     = "YOUR_MQTT_USER";
-static const char* MQTT_PASS     = "YOUR_MQTT_PASSWORD";
+#define FREEDOM_MQTT_SERVER "mqtt.local"
+#define FREEDOM_MQTT_PORT 1883
+#define FREEDOM_MQTT_USER "YOUR_MQTT_USER"
+#define FREEDOM_MQTT_PASS "YOUR_MQTT_PASSWORD"
 
 // Optional developer-only test mode for the stats and ritual screens.
 // Uncomment temporarily to seed one year of synthetic daily history into

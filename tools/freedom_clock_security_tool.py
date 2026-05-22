@@ -22,6 +22,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKETCH_PATH = REPO_ROOT / "Freedom_Clock_HeltecVME.ino"
+CONFIG_HEADER_PATH = REPO_ROOT / "src" / "config.h"
 PARTITIONS_PATH = REPO_ROOT / "partitions.csv"
 WORKDIR = REPO_ROOT / "provisioning-workdir"
 RELEASES_DIR = WORKDIR / "releases"
@@ -213,10 +214,13 @@ def require_file(path: Path, description: str) -> Path:
 
 
 def current_firmware_version() -> str:
-    match = FIRMWARE_VERSION_RE.search(SKETCH_PATH.read_text())
-    if not match:
-        return "UNKNOWN"
-    return match.group("version")
+    for path in (CONFIG_HEADER_PATH, SKETCH_PATH):
+        if not path.exists():
+            continue
+        match = FIRMWARE_VERSION_RE.search(path.read_text())
+        if match:
+            return match.group("version")
+    return "UNKNOWN"
 
 
 def serial_ports() -> list[str]:

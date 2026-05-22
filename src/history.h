@@ -1,0 +1,704 @@
+#pragma once
+
+static void clearBatteryLogInMemory(BatteryLog& log) {
+  memset(&log, 0, sizeof(log));
+  log.version = BATTERY_LOG_VERSION;
+}
+
+static bool loadBatteryLog(BatteryLog& log) {
+  clearBatteryLogInMemory(log);
+
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, true)) {
+    return false;
+  }
+
+  const size_t storedSize = preferences.getBytesLength("log");
+  if (storedSize == sizeof(BatteryLog)) {
+    preferences.getBytes("log", &log, sizeof(BatteryLog));
+  }
+  preferences.end();
+
+  if (log.version != BATTERY_LOG_VERSION || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+    clearBatteryLogInMemory(log);
+    return false;
+  }
+  return true;
+}
+
+static bool saveBatteryLog(const BatteryLog& log) {
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
+    return false;
+  }
+  const size_t written = preferences.putBytes("log", &log, sizeof(BatteryLog));
+  preferences.end();
+  return written == sizeof(BatteryLog);
+}
+
+static bool clearBatteryLog() {
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
+    return false;
+  }
+  const bool ok = preferences.clear();
+  preferences.end();
+  return ok;
+}
+
+static bool appendBatteryLogSample(BatteryLog& log, time_t now, float voltage, int percent) {
+  if (!(voltage > 0.0f)) return false;
+  if (log.version != BATTERY_LOG_VERSION || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+    clearBatteryLogInMemory(log);
+  }
+
+  const uint8_t index = log.nextIndex;
+  log.nextSampleId++;
+  if (log.nextSampleId == 0) log.nextSampleId = 1;
+  log.sampleId[index] = log.nextSampleId;
+  log.unixTime[index] = (now >= 1700000000) ? (uint32_t)now : 0;
+  log.millivolts[index] = (uint16_t)clampInt((int)(voltage * 1000.0f + 0.5f), 0, 65535);
+  log.percent[index] = (uint8_t)clampInt(percent, 0, 100);
+
+  log.nextIndex = (uint8_t)((index + 1) % BATTERY_LOG_SAMPLES);
+  if (log.count < BATTERY_LOG_SAMPLES) log.count++;
+  return true;
+}
+
+static String buildBatteryLogText(const BatteryLog& log) {
+  String out;
+  out.reserve(2200);
+  out += "Battery calibration log\n";
+  out += "Format: sample, unix_time, voltage, percent\n";
+  out += "Newest sample is last.\n\n";
+
+  if (log.version != BATTERY_LOG_VERSION || log.count == 0 || log.count > BATTERY_LOG_SAMPLES) {
+    out += "No battery samples recorded yet.";
+    return out;
+  }
+
+  const uint8_t firstIndex = (log.count == BATTERY_LOG_SAMPLES) ? log.nextIndex : 0;
+  for (uint8_t i = 0; i < log.count; i++) {
+    const uint8_t index = (uint8_t)((firstIndex + i) % BATTERY_LOG_SAMPLES);
+    char line[80];
+    snprintf(
+      line,
+      sizeof(line),
+      "#%lu, t=%lu, v=%.2fV, p=%u%%\n",
+      (unsigned long)log.sampleId[index],
+      (unsigned long)log.unixTime[index],
+      (double)log.millivolts[index] / 1000.0,
+      (unsigned int)log.percent[index]
+    );
+    out += line;
+  }
+  return out;
+}
+
+#if ENABLE_DEVELOPER_STATS
+static size_t estimateQuoteDatabaseTextBytes() {
+  size_t total = 0;
+  for (size_t i = 0; i < QUOTE_DB_COUNT; i++) {
+    if (QUOTE_DB[i].text) total += strlen(QUOTE_DB[i].text) + 1;
+    if (QUOTE_DB[i].author) total += strlen(QUOTE_DB[i].author) + 1;
+  }
+  return total;
+}
+
+static void appendUsageLine(String& out, const char* label, uint32_t used, uint32_t total, const char* unit) {
+  char line[160];
+  if (total > 0) {
+    snprintf(
+      line,
+      sizeof(line),
+      "%s: %.1f / %.1f %s used (%.1f%%)\n",
+      label,
+      (double)used / 1024.0,
+      (double)total / 1024.0,
+      unit,
+      ((double)used * 100.0) / (double)total
+    );
+  } else {
+    snprintf(line, sizeof(line), "%s: unavailable\n", label);
+  }
+  out += line;
+}
+
+static void appendEntryUsageLine(String& out, const char* label, uint32_t used, uint32_t total) {
+  char line[160];
+  if (total > 0) {
+    snprintf(
+      line,
+      sizeof(line),
+      "%s: %lu / %lu entries used (%.1f%%)\n",
+      label,
+      (unsigned long)used,
+      (unsigned long)total,
+      ((double)used * 100.0) / (double)total
+    );
+  } else {
+    snprintf(line, sizeof(line), "%s: unavailable\n", label);
+  }
+  out += line;
+}
+
+static String buildDeveloperStatsText() {
+  String out;
+  out.reserve(1800);
+  out += "Developer storage stats\n";
+  out += "Firmware: ";
+  out += FIRMWARE_VERSION;
+  out += "\nBoard: ";
+  out += DEVICE_MODEL_NAME;
+  out += "\n\n";
+
+  appendUsageLine(out, "Firmware space usage", ESP.getSketchSize(), ESP.getSketchSize() + ESP.getFreeSketchSpace(), "KB");
+  out += "Quotes are compiled into firmware.\n";
+
+  appendUsageLine(out, "Runtime memory usage", ESP.getHeapSize() - ESP.getFreeHeap(), ESP.getHeapSize(), "KB");
+
+  out += "\nQuote database\n";
+  char quoteLine[96];
+  snprintf(
+    quoteLine,
+    sizeof(quoteLine),
+    "Quotes: %u\nQuote text bytes: %lu\n",
+    (unsigned int)QUOTE_DB_COUNT,
+    (unsigned long)estimateQuoteDatabaseTextBytes()
+  );
+  out += quoteLine;
+
+  nvs_stats_t nvsStats = {};
+  if (nvs_get_stats(nullptr, &nvsStats) == ESP_OK) {
+    out += "\n";
+    appendEntryUsageLine(out, "Settings storage (NVS)", nvsStats.used_entries, nvsStats.total_entries);
+    char nvsLine[48];
+    snprintf(nvsLine, sizeof(nvsLine), "Namespaces: %u\n", (unsigned int)nvsStats.namespace_count);
+    out += nvsLine;
+  } else {
+    out += "\nNVS stats unavailable.\n";
+  }
+
+  return out;
+}
+#endif
+
+static void clearWealthHistoryInMemory(WealthHistory& history) {
+  history.latestDay = 0;
+  for (uint16_t i = 0; i < WEALTH_HISTORY_DAYS; i++) {
+    history.dailyWealthValue[i] = WEALTH_HISTORY_EMPTY;
+    history.dailyPriceValue[i] = PRICE_HISTORY_EMPTY;
+    history.dailyBalanceSats[i] = BALANCE_HISTORY_EMPTY;
+  }
+}
+
+static bool loadWealthHistory(WealthHistory& history) {
+  clearWealthHistoryInMemory(history);
+
+  if (!preferences.begin(HISTORY_NAMESPACE, true)) {
+    return false;
+  }
+
+  const uint32_t storedVersion = preferences.getUInt("ver", 0);
+  if (storedVersion != HISTORY_VERSION) {
+    preferences.end();
+    return false;
+  }
+
+  history.latestDay = preferences.getUInt("day", 0);
+  size_t wealthBytesRead = preferences.getBytes("wealth", history.dailyWealthValue, sizeof(history.dailyWealthValue));
+  size_t priceBytesRead = preferences.getBytes("price", history.dailyPriceValue, sizeof(history.dailyPriceValue));
+  size_t balanceBytesRead = preferences.getBytes("bal", history.dailyBalanceSats, sizeof(history.dailyBalanceSats));
+  preferences.end();
+
+  if (
+    wealthBytesRead != sizeof(history.dailyWealthValue) ||
+    priceBytesRead != sizeof(history.dailyPriceValue) ||
+    balanceBytesRead != sizeof(history.dailyBalanceSats)
+  ) {
+    clearWealthHistoryInMemory(history);
+    return false;
+  }
+
+  return history.latestDay > 0;
+}
+
+static void recordHistoryWriteMetadata(uint32_t latestDay);
+static void recordHistoryClearMetadata(const char* reason);
+
+static bool saveWealthHistory(const WealthHistory& history) {
+  if (!preferences.begin(HISTORY_NAMESPACE, false)) {
+    return false;
+  }
+
+  preferences.putUInt("ver", HISTORY_VERSION);
+  preferences.putUInt("day", history.latestDay);
+  size_t wealthBytesWritten = preferences.putBytes("wealth", history.dailyWealthValue, sizeof(history.dailyWealthValue));
+  size_t priceBytesWritten = preferences.putBytes("price", history.dailyPriceValue, sizeof(history.dailyPriceValue));
+  size_t balanceBytesWritten = preferences.putBytes("bal", history.dailyBalanceSats, sizeof(history.dailyBalanceSats));
+  preferences.end();
+  const bool saved = (
+    wealthBytesWritten == sizeof(history.dailyWealthValue) &&
+    priceBytesWritten == sizeof(history.dailyPriceValue) &&
+    balanceBytesWritten == sizeof(history.dailyBalanceSats)
+  );
+  if (saved) {
+    recordHistoryWriteMetadata(history.latestDay);
+  }
+  return saved;
+}
+
+static void recordHistoryWriteMetadata(uint32_t latestDay) {
+  if (!preferences.begin(CONFIG_NAMESPACE, false)) {
+    return;
+  }
+  const uint32_t writeCount = preferences.getUInt("hist_writes", 0);
+  preferences.putUInt("hist_writes", writeCount + 1);
+  preferences.putUInt("hist_write_day", latestDay);
+  preferences.end();
+}
+
+static void recordHistoryClearMetadata(const char* reason) {
+  if (!preferences.begin(CONFIG_NAMESPACE, false)) {
+    return;
+  }
+  const uint32_t clearCount = preferences.getUInt("hist_clears", 0);
+  preferences.putUInt("hist_clears", clearCount + 1);
+  preferences.putString("hist_clear", reason ? reason : "unknown");
+  preferences.putUInt("hist_clear_day", lastKnownUnixTime >= 1700000000 ? (uint32_t)((uint64_t)lastKnownUnixTime / 86400ULL) : 0);
+  preferences.end();
+}
+
+static bool clearWealthHistory() {
+  if (!preferences.begin(HISTORY_NAMESPACE, false)) {
+    return false;
+  }
+  bool cleared = preferences.clear();
+  preferences.end();
+  return cleared;
+}
+
+static bool clearWealthHistoryWithReason(const char* reason) {
+  const bool cleared = clearWealthHistory();
+  if (cleared) {
+    recordHistoryClearMetadata(reason);
+  }
+  return cleared;
+}
+
+static bool updateWealthHistory(
+  WealthHistory& history,
+  time_t now,
+  float wealthValue,
+  bool hasBtcBreakdown,
+  float priceValue,
+  float balanceBtc
+) {
+  if (now <= 0 || !(wealthValue >= 0.0f)) return false;
+
+  const uint32_t currentDay = (uint32_t)((uint64_t)now / 86400ULL);
+  const int32_t wealthRounded = (wealthValue >= (float)INT32_MAX)
+    ? INT32_MAX
+    : (int32_t)(wealthValue + 0.5f);
+  const int32_t priceRounded = (hasBtcBreakdown && priceValue < (float)INT32_MAX)
+    ? (int32_t)(priceValue + 0.5f)
+    : PRICE_HISTORY_EMPTY;
+  const int64_t balanceSats = hasBtcBreakdown
+    ? (int64_t)(balanceBtc * 100000000.0 + 0.5)
+    : BALANCE_HISTORY_EMPTY;
+
+  if (history.latestDay == 0) {
+    clearWealthHistoryInMemory(history);
+    history.latestDay = currentDay;
+    history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1] = wealthRounded;
+    history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1] = priceRounded;
+    history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1] = balanceSats;
+    return true;
+  }
+
+  if (currentDay <= history.latestDay) {
+    int32_t& latest = history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1];
+    int32_t& latestPrice = history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1];
+    int64_t& latestBalance = history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1];
+    if (latest == wealthRounded && latestPrice == priceRounded && latestBalance == balanceSats) return false;
+    latest = wealthRounded;
+    latestPrice = priceRounded;
+    latestBalance = balanceSats;
+    return true;
+  }
+
+  const uint32_t dayDelta = currentDay - history.latestDay;
+  const int32_t previousLatest = history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1];
+  const int32_t previousLatestPrice = history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1];
+  const int64_t previousLatestBalance = history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1];
+
+  if (dayDelta >= WEALTH_HISTORY_DAYS) {
+    clearWealthHistoryInMemory(history);
+    history.latestDay = currentDay;
+    history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1] = wealthRounded;
+    history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1] = priceRounded;
+    history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1] = balanceSats;
+    return true;
+  }
+
+  memmove(
+    history.dailyWealthValue,
+    history.dailyWealthValue + dayDelta,
+    (WEALTH_HISTORY_DAYS - dayDelta) * sizeof(history.dailyWealthValue[0])
+  );
+  memmove(
+    history.dailyPriceValue,
+    history.dailyPriceValue + dayDelta,
+    (WEALTH_HISTORY_DAYS - dayDelta) * sizeof(history.dailyPriceValue[0])
+  );
+  memmove(
+    history.dailyBalanceSats,
+    history.dailyBalanceSats + dayDelta,
+    (WEALTH_HISTORY_DAYS - dayDelta) * sizeof(history.dailyBalanceSats[0])
+  );
+
+  const int32_t fillValue = (previousLatest == WEALTH_HISTORY_EMPTY) ? wealthRounded : previousLatest;
+  const int32_t fillPriceValue = (previousLatestPrice == PRICE_HISTORY_EMPTY) ? priceRounded : previousLatestPrice;
+  const int64_t fillBalanceValue = (previousLatestBalance == BALANCE_HISTORY_EMPTY) ? balanceSats : previousLatestBalance;
+  for (uint32_t i = WEALTH_HISTORY_DAYS - dayDelta; i < (WEALTH_HISTORY_DAYS - 1); i++) {
+    history.dailyWealthValue[i] = fillValue;
+    history.dailyPriceValue[i] = (hasBtcBreakdown ? fillPriceValue : PRICE_HISTORY_EMPTY);
+    history.dailyBalanceSats[i] = (hasBtcBreakdown ? fillBalanceValue : BALANCE_HISTORY_EMPTY);
+  }
+  history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1] = wealthRounded;
+  history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1] = priceRounded;
+  history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1] = balanceSats;
+  history.latestDay = currentDay;
+  return true;
+}
+
+static bool getHistoricalWealthValue(const WealthHistory& history, uint16_t daysAgo, int32_t& outWealthValue) {
+  if (history.latestDay == 0 || daysAgo >= WEALTH_HISTORY_DAYS) return false;
+
+  const int index = (int)WEALTH_HISTORY_DAYS - 1 - (int)daysAgo;
+  if (index < 0) return false;
+
+  const int32_t stored = history.dailyWealthValue[index];
+  if (stored == WEALTH_HISTORY_EMPTY) return false;
+
+  outWealthValue = stored;
+  return true;
+}
+
+static bool getHistoricalPriceValue(const WealthHistory& history, uint16_t daysAgo, int32_t& outPriceValue) {
+  if (history.latestDay == 0 || daysAgo >= WEALTH_HISTORY_DAYS) return false;
+
+  const int index = (int)WEALTH_HISTORY_DAYS - 1 - (int)daysAgo;
+  if (index < 0) return false;
+
+  const int32_t stored = history.dailyPriceValue[index];
+  if (stored == PRICE_HISTORY_EMPTY) return false;
+
+  outPriceValue = stored;
+  return true;
+}
+
+static bool getHistoricalBalanceSats(const WealthHistory& history, uint16_t daysAgo, int64_t& outBalanceSats) {
+  if (history.latestDay == 0 || daysAgo >= WEALTH_HISTORY_DAYS) return false;
+
+  const int index = (int)WEALTH_HISTORY_DAYS - 1 - (int)daysAgo;
+  if (index < 0) return false;
+
+  const int64_t stored = history.dailyBalanceSats[index];
+  if (stored == BALANCE_HISTORY_EMPTY) return false;
+
+  outBalanceSats = stored;
+  return true;
+}
+
+#if ENABLE_DEVELOPER_STATS
+static void appendHistoryRowValue(String& out, int32_t value, int32_t emptyValue) {
+  if (value == emptyValue) {
+    return;
+  }
+  out += String((long)value);
+}
+
+static void appendHistoryBalanceBtc(String& out, int64_t sats) {
+  if (sats == BALANCE_HISTORY_EMPTY) {
+    return;
+  }
+  out += String((double)sats / 100000000.0, 8);
+}
+
+static void appendHistorySnapshotLine(String& out, const WealthHistory& history, const char* label, uint16_t daysAgo) {
+  int32_t wealthValue = 0;
+  int32_t priceValue = 0;
+  int64_t balanceSats = 0;
+  out += label;
+  out += ": ";
+  if (getHistoricalWealthValue(history, daysAgo, wealthValue)) {
+    out += "wealth=";
+    out += String((long)wealthValue);
+  } else {
+    out += "wealth=N/A";
+  }
+  out += ", ";
+  if (getHistoricalPriceValue(history, daysAgo, priceValue)) {
+    out += "btc_price=";
+    out += String((long)priceValue);
+  } else {
+    out += "btc_price=N/A";
+  }
+  out += ", ";
+  if (getHistoricalBalanceSats(history, daysAgo, balanceSats)) {
+    out += "btc_balance=";
+    out += String((double)balanceSats / 100000000.0, 8);
+  } else {
+    out += "btc_balance=N/A";
+  }
+  out += "\n";
+}
+
+static void appendHistoryLifecycleStats(String& out) {
+  uint32_t writeCount = 0;
+  uint32_t lastWriteDay = 0;
+  uint32_t clearCount = 0;
+  uint32_t lastClearDay = 0;
+  String lastClearReason = "N/A";
+
+  if (preferences.begin(CONFIG_NAMESPACE, true)) {
+    writeCount = preferences.getUInt("hist_writes", 0);
+    lastWriteDay = preferences.getUInt("hist_write_day", 0);
+    clearCount = preferences.getUInt("hist_clears", 0);
+    lastClearDay = preferences.getUInt("hist_clear_day", 0);
+    lastClearReason = preferences.getString("hist_clear", "N/A");
+    preferences.end();
+  }
+
+  out += "Lifecycle\n";
+  out += "history_write_count=";
+  out += String((unsigned long)writeCount);
+  out += "\nlast_write_day=";
+  out += String((unsigned long)lastWriteDay);
+  out += "\nlast_write_unix_midnight=";
+  out += String((unsigned long)((uint64_t)lastWriteDay * 86400ULL));
+  out += "\nhistory_clear_count=";
+  out += String((unsigned long)clearCount);
+  out += "\nlast_clear_day=";
+  out += String((unsigned long)lastClearDay);
+  out += "\nlast_clear_unix_midnight=";
+  out += String((unsigned long)((uint64_t)lastClearDay * 86400ULL));
+  out += "\nlast_clear_reason=";
+  out += lastClearReason;
+  out += "\n\n";
+}
+
+static String buildHistoryStatsText(const WealthHistory& history, uint8_t currencyCode) {
+  String out;
+  out.reserve(26000);
+  out += "Freedom / wealth history stats\n";
+  out += "Used by: freedom change screen and wealth change screen\n";
+  out += "Currency: ";
+  out += currencyCodeLabel(currencyCode);
+  out += "\n";
+  out += "Storage: NVS namespace ";
+  out += HISTORY_NAMESPACE;
+  out += ", version ";
+  out += String((unsigned long)HISTORY_VERSION);
+  out += "\nCapacity: ";
+  out += String((unsigned int)WEALTH_HISTORY_DAYS);
+  out += " days\n";
+  out += "Format: latest stored day is days_ago=0. Unix time is midnight UTC for the stored day.\n";
+  out += "Sensitive: contains wealth/BTC history. Copy only for development/debugging.\n\n";
+  appendHistoryLifecycleStats(out);
+
+  if (history.latestDay == 0) {
+    out += "Status: no history loaded or recorded yet.\n";
+    out += "A first history row is written after a normal clock refresh with valid time and calculable wealth data.\n";
+    out += "Opening setup immediately after reset or before the first successful refresh will show no rows here.";
+    return out;
+  }
+
+  uint16_t recordedRows = 0;
+  for (uint16_t i = 0; i < WEALTH_HISTORY_DAYS; i++) {
+    if (
+      history.dailyWealthValue[i] != WEALTH_HISTORY_EMPTY ||
+      history.dailyPriceValue[i] != PRICE_HISTORY_EMPTY ||
+      history.dailyBalanceSats[i] != BALANCE_HISTORY_EMPTY
+    ) {
+      recordedRows++;
+    }
+  }
+
+  out += "Status: history loaded from device storage\n";
+  out += "latest_day=";
+  out += String((unsigned long)history.latestDay);
+  out += "\nlatest_unix_midnight=";
+  out += String((unsigned long)((uint64_t)history.latestDay * 86400ULL));
+  out += "\nrecorded_rows=";
+  out += String((unsigned int)recordedRows);
+  if (recordedRows == 1) {
+    out += "\ninterpretation=Only one UTC daily bucket exists. This usually means history was reset recently, or the first successful app refresh with valid time/data happened today.";
+  }
+  out += "\n\nScreen period snapshot\n";
+  appendHistorySnapshotLine(out, history, "1D", 1);
+  appendHistorySnapshotLine(out, history, "7D", 7);
+  appendHistorySnapshotLine(out, history, "1M", 30);
+  appendHistorySnapshotLine(out, history, "3M", 90);
+  appendHistorySnapshotLine(out, history, "6M", 180);
+  appendHistorySnapshotLine(out, history, "12M", 365);
+
+  out += "\nCSV\n";
+  out += "days_ago,day,unix_midnight,wealth_value,btc_price_value,btc_balance_btc\n";
+
+  for (uint16_t daysAgo = 0; daysAgo < WEALTH_HISTORY_DAYS; daysAgo++) {
+    const int index = (int)WEALTH_HISTORY_DAYS - 1 - (int)daysAgo;
+    if (index < 0) break;
+
+    const int32_t wealthValue = history.dailyWealthValue[index];
+    const int32_t priceValue = history.dailyPriceValue[index];
+    const int64_t balanceSats = history.dailyBalanceSats[index];
+    if (wealthValue == WEALTH_HISTORY_EMPTY && priceValue == PRICE_HISTORY_EMPTY && balanceSats == BALANCE_HISTORY_EMPTY) {
+      continue;
+    }
+
+    const uint32_t day = (history.latestDay > daysAgo) ? (history.latestDay - daysAgo) : 0;
+    out += String((unsigned int)daysAgo);
+    out += ",";
+    out += String((unsigned long)day);
+    out += ",";
+    out += String((unsigned long)((uint64_t)day * 86400ULL));
+    out += ",";
+    appendHistoryRowValue(out, wealthValue, WEALTH_HISTORY_EMPTY);
+    out += ",";
+    appendHistoryRowValue(out, priceValue, PRICE_HISTORY_EMPTY);
+    out += ",";
+    appendHistoryBalanceBtc(out, balanceSats);
+    out += "\n";
+  }
+
+  return out;
+}
+#endif
+
+static bool maybeSeedTestWealthHistory(
+  WealthHistory& history,
+  time_t now,
+  const DeviceConfig& cfg,
+  float currentWealthValue,
+  bool hasBtcBreakdown,
+  float currentPriceValue,
+  float currentBalanceBtc
+) {
+#if ENABLE_TEST_HISTORY
+  if (now <= 0) return false;
+  if (!FORCE_TEST_HISTORY_ON_EVERY_BOOT && history.latestDay != 0) return false;
+
+  clearWealthHistoryInMemory(history);
+  history.latestDay = (uint32_t)((uint64_t)now / 86400ULL);
+
+  const AssetMode assetMode = sanitizeAssetMode(cfg.assetMode);
+  const bool seedBtcBreakdown = isAnyBtcAssetMode(assetMode);
+  const float endingPriceValue = (hasBtcBreakdown && currentPriceValue > 0.0f) ? currentPriceValue : 65000.0f;
+  const float endingBalanceBtc = (hasBtcBreakdown && currentBalanceBtc > 0.0f) ? currentBalanceBtc : 1.2500f;
+  const float endingWealthValue = (currentWealthValue > 0.0f)
+    ? currentWealthValue
+    : (seedBtcBreakdown
+        ? (endingPriceValue * endingBalanceBtc)
+        : ((cfg.defaultWealthValue > 0.0f) ? cfg.defaultWealthValue : DEFAULT_WEALTH_VALUE));
+
+  for (uint16_t i = 0; i < WEALTH_HISTORY_DAYS; i++) {
+    const float progress = (WEALTH_HISTORY_DAYS <= 1)
+      ? 1.0f
+      : ((float)i / (float)(WEALTH_HISTORY_DAYS - 1));
+
+    if (seedBtcBreakdown) {
+      const float priceWave = (float)((int)(i % 21) - 10) / 10.0f;
+      const float balanceWave = (float)((int)(i % 35) - 17) / 17.0f;
+      float seededPriceValue = endingPriceValue * (0.72f + (0.28f * progress));
+      float seededBalanceBtc = endingBalanceBtc * (0.88f + (0.12f * progress));
+      seededPriceValue += endingPriceValue * 0.03f * priceWave;
+      seededBalanceBtc += endingBalanceBtc * 0.01f * balanceWave;
+      seededBalanceBtc += endingBalanceBtc * 0.0025f * (float)(i / 45);
+      if (!(seededPriceValue > 0.0f)) seededPriceValue = endingPriceValue;
+      if (!(seededBalanceBtc > 0.0f)) seededBalanceBtc = endingBalanceBtc;
+      const float seededWealthValue = seededPriceValue * seededBalanceBtc;
+      history.dailyPriceValue[i] = (int32_t)(seededPriceValue + 0.5f);
+      history.dailyBalanceSats[i] = (int64_t)(seededBalanceBtc * 100000000.0 + 0.5);
+      history.dailyWealthValue[i] = (seededWealthValue >= (float)INT32_MAX)
+        ? INT32_MAX
+        : (int32_t)(seededWealthValue + 0.5f);
+    } else {
+      const float wealthWave = (float)((int)(i % 31) - 15) / 15.0f;
+      float seededWealthValue = endingWealthValue * (0.76f + (0.24f * progress));
+      seededWealthValue += endingWealthValue * 0.015f * wealthWave;
+      if (!(seededWealthValue >= 0.0f)) seededWealthValue = endingWealthValue;
+      history.dailyWealthValue[i] = (seededWealthValue >= (float)INT32_MAX)
+        ? INT32_MAX
+        : (int32_t)(seededWealthValue + 0.5f);
+      history.dailyPriceValue[i] = PRICE_HISTORY_EMPTY;
+      history.dailyBalanceSats[i] = BALANCE_HISTORY_EMPTY;
+    }
+  }
+
+  const uint16_t weeklyStartIndex = (WEALTH_HISTORY_DAYS > 8) ? (WEALTH_HISTORY_DAYS - 8) : 0;
+  const uint16_t weeklySteps = (uint16_t)(WEALTH_HISTORY_DAYS - weeklyStartIndex - 1);
+  if (weeklySteps > 0) {
+    for (uint16_t i = weeklyStartIndex; i < WEALTH_HISTORY_DAYS; i++) {
+      const float weeklyProgress = (float)(i - weeklyStartIndex) / (float)weeklySteps;
+      if (seedBtcBreakdown) {
+        const float weeklyPriceValue = endingPriceValue * (0.95f + (0.05f * weeklyProgress));
+        const float weeklyBalanceBtc = endingBalanceBtc * (0.992f + (0.008f * weeklyProgress));
+        const float weeklyWealthValue = weeklyPriceValue * weeklyBalanceBtc;
+        history.dailyPriceValue[i] = (int32_t)(weeklyPriceValue + 0.5f);
+        history.dailyBalanceSats[i] = (int64_t)(weeklyBalanceBtc * 100000000.0 + 0.5);
+        history.dailyWealthValue[i] = (weeklyWealthValue >= (float)INT32_MAX)
+          ? INT32_MAX
+          : (int32_t)(weeklyWealthValue + 0.5f);
+      } else {
+        const float weeklyWealthValue = endingWealthValue * (0.94f + (0.06f * weeklyProgress));
+        history.dailyWealthValue[i] = (weeklyWealthValue >= (float)INT32_MAX)
+          ? INT32_MAX
+          : (int32_t)(weeklyWealthValue + 0.5f);
+      }
+    }
+  }
+
+  if (seedBtcBreakdown) {
+    history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1] = (int32_t)(endingPriceValue + 0.5f);
+    history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1] = (int64_t)(endingBalanceBtc * 100000000.0 + 0.5);
+    const float exactEndingWealthValue = endingPriceValue * endingBalanceBtc;
+    history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1] = (exactEndingWealthValue >= (float)INT32_MAX)
+      ? INT32_MAX
+      : (int32_t)(exactEndingWealthValue + 0.5f);
+  } else {
+    history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1] = (endingWealthValue >= (float)INT32_MAX)
+      ? INT32_MAX
+      : (int32_t)(endingWealthValue + 0.5f);
+    history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1] = PRICE_HISTORY_EMPTY;
+    history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1] = BALANCE_HISTORY_EMPTY;
+  }
+
+  return saveWealthHistory(history);
+#else
+  (void)history;
+  (void)now;
+  (void)cfg;
+  (void)currentWealthValue;
+  (void)hasBtcBreakdown;
+  (void)currentPriceValue;
+  (void)currentBalanceBtc;
+  return false;
+#endif
+}
+
+static bool didHistorySourceChange(const DeviceConfig& oldCfg, const DeviceConfig& newCfg) {
+  if (!oldCfg.configured) return false;
+
+  const AssetMode oldMode = sanitizeAssetMode(oldCfg.assetMode);
+  const AssetMode newMode = sanitizeAssetMode(newCfg.assetMode);
+  if (oldMode != newMode) return true;
+  if (sanitizeCurrencyCode(oldCfg.currencyCode) != sanitizeCurrencyCode(newCfg.currencyCode)) return true;
+
+  if (isMqttBtcAssetMode(newMode)) {
+    if (oldCfg.mqttPort != newCfg.mqttPort) return true;
+    if (strcmp(oldCfg.mqttServer, newCfg.mqttServer) != 0) return true;
+    if (strcmp(oldCfg.topicPriceValue, newCfg.topicPriceValue) != 0) return true;
+    if (strcmp(oldCfg.topicBalanceBtc, newCfg.topicBalanceBtc) != 0) return true;
+  }
+
+  return false;
+}

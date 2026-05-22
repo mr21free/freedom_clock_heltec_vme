@@ -30,8 +30,8 @@ Recommended points:
 
 Avoid these pins:
 - `GPIO1` to `GPIO6`: used by the e-ink display
-- `GPIO21`: already used as the user button
-- `BOOT` / `GPIO0`: boot strap behavior
+- `GPIO21`: already used as the FUNCTION button
+- `BOOT` / `GPIO0`: already used as the SETUP button and still has ESP32 boot strap behavior
 - `GPIO17`: marked as `ADC_CTRL` on the Heltec pin map
 - `GPIO45` / `GPIO46`: avoid because they are already involved in board-specific control/strap behavior
 - `5V` or `VBAT`: avoid for the first prototype unless the LED module is explicitly designed for it
@@ -126,7 +126,7 @@ Avoid:
 
 The clean firmware-controlled version would be:
 - keep `GPIO42` as `FRONTLIGHT_PIN`
-- use the existing `21` button to wake the device
+- use the existing FUNCTION button (`21 / GPIO21`) to wake the device
 - after the selected screen is drawn, keep the front light on for a short window such as `15` to `20` seconds
 - turn the light off before deep sleep
 
