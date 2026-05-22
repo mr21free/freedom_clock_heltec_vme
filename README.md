@@ -134,6 +134,8 @@ Developer stats are disabled by default. Developers can enable all local diagnos
 #define ENABLE_DEVELOPER_STATS 1
 ```
 
+Even when the Developer section is disabled, minimal boot/setup diagnostics are still printed to Serial so setup failures can be debugged.
+
 ## Firmware Updates
 
 The setup page supports two update paths:

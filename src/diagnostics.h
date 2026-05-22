@@ -1,11 +1,11 @@
 #pragma once
 
 static bool diagnosticsTrackingEnabled() {
-#if ENABLE_DEVELOPER_STATS
+  // Keep core boot/setup diagnostics available even in production builds.
+  // ENABLE_DEVELOPER_STATS only controls whether the setup page exposes
+  // the copyable Developer section; it should not hide root-cause logs when
+  // the device cannot enter setup.
   return true;
-#else
-  return false;
-#endif
 }
 
 static const char* boolText(bool value) {
@@ -238,6 +238,7 @@ static void savePortalDiagnostics(const char* event, const char* detail, bool co
   appendDiagnosticLine(out, "AP SSID", portalApSsid[0] ? portalApSsid : "(empty)");
   appendDiagnosticNumber(out, "AP SSID length", (long)strlen(portalApSsid));
   appendDiagnosticNumber(out, "AP password length", (long)strlen(portalApPassword));
+  appendDiagnosticLine(out, "AP start failure", portalApStartFailureDetail[0] ? portalApStartFailureDetail : "none");
   appendDiagnosticLine(out, "SoftAP IP", WiFi.softAPIP().toString().c_str());
   appendDiagnosticNumber(out, "SoftAP station count", (long)WiFi.softAPgetStationNum());
   appendDiagnosticLine(out, "STA SSID configured", boolText(deviceConfig.wifiSsid[0] != '\0'));

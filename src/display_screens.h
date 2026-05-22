@@ -300,8 +300,26 @@ static void drawSetupPortalFirmwareUpdatedScreen() {
   drawBrandedStatusScreen("SOFTWARE UPDATED", "Restarting ", true);
 }
 
-static void drawSetupPortalErrorScreen(const char* message) {
-  drawPortalScreen("SETUP ERROR", "Could not start config portal", message, "Restart the device and try again", "");
+static void drawSetupPortalErrorScreen(
+  const char* reason,
+  const char* detail1 = "",
+  const char* detail2 = "",
+  const char* detail3 = ""
+) {
+  const DisplayThemeMode themeMode = statusScreenThemeMode();
+  prepareScreen(themeMode);
+  drawLogoTitleLine("SETUP ERROR", 9, 9, 2, themeMode);
+
+  display.setTextSize(1);
+  display.setCursor(9, 42);
+  display.print(reason && reason[0] ? reason : "Could not start setup");
+  display.setCursor(9, 62);
+  display.print(detail1 ? detail1 : "");
+  display.setCursor(9, 82);
+  display.print(detail2 ? detail2 : "");
+  display.setCursor(9, 96);
+  display.print(detail3 ? detail3 : "");
+  display.update();
 }
 
 static void drawSetupPortalResetScreen() {

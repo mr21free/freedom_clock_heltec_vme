@@ -124,6 +124,7 @@ static char balanceBtcBuf[VALUE_BUFFER_SIZE] = "";
 static char deviceId[DEVICE_ID_SIZE] = "";
 static char portalApSsid[AP_SSID_SIZE] = "";
 static char portalApPassword[AP_PASSWORD_SIZE] = "";
+static char portalApStartFailureDetail[96] = "";
 static bool portalSaveRequested = false;
 enum PortalExitAction {
   PORTAL_EXIT_ACTION_NONE = 0,

@@ -664,7 +664,9 @@ static String buildPortalUnlockPage(const char* statusMessage = nullptr, bool is
   html += ".hero p{margin:0;line-height:1.5;color:#5b3300;}";
   html += ".card{margin-top:22px;background:#fff;border-radius:18px;padding:18px;box-shadow:0 12px 30px rgba(18,18,18,.08);}";
   html += "label{display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:#3a342d;}";
-  html += "input{width:100%;box-sizing:border-box;min-height:44px;height:44px;padding:10px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;line-height:1.2;background:#fdfbf6;color:#171717;letter-spacing:.08em;}";
+  html += "input{width:100%;box-sizing:border-box;min-height:44px;height:44px;padding:10px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;line-height:1.2;background:#fdfbf6;color:#171717;}";
+  html += ".password-wrap{position:relative;}.password-wrap input{padding-right:12px;}.password-wrap.has-secret input{padding-right:78px;}.password-wrap input[type=password]{letter-spacing:.08em;}";
+  html += ".password-toggle{display:none;position:absolute;right:6px;top:6px;min-height:32px;height:32px;padding:0 11px;border-radius:999px;font-size:13px;background:#ded4c2;color:#211d19;}.password-wrap.has-secret .password-toggle{display:block;}";
   html += ".hint{font-size:12px;color:#6b6258;margin-top:8px;line-height:1.45;}";
   html += ".message{padding:14px 16px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-line;margin-top:18px;}";
   html += ".ok{background:#e8f7ea;color:#1d5d2d;}";
@@ -696,9 +698,11 @@ static String buildPortalUnlockPage(const char* statusMessage = nullptr, bool is
 
   html += "<section class=\"card\"><form method=\"post\" action=\"/unlock\">";
   html += "<label for=\"setup_pin_unlock\">Enter your PIN</label>";
-  html += "<input id=\"setup_pin_unlock\" name=\"setup_pin_unlock\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" autocomplete=\"one-time-code\"";
+  html += "<div class=\"password-wrap\"><input id=\"setup_pin_unlock\" name=\"setup_pin_unlock\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" autocomplete=\"one-time-code\"";
   if (remainingSeconds > 0) html += " disabled";
-  html += ">";
+  html += "><button class=\"password-toggle\" type=\"button\" data-password-toggle=\"setup_pin_unlock\"";
+  if (remainingSeconds > 0) html += " disabled";
+  html += ">Show</button></div>";
   html += "<div class=\"hint\">After wrong attempts, the wait grows. A 10-second factory reset still clears the PIN and all saved settings.</div>";
   html += "<div class=\"actions\"><button type=\"submit\"";
   if (remainingSeconds > 0) html += " disabled";
@@ -713,6 +717,12 @@ static String buildPortalUnlockPage(const char* statusMessage = nullptr, bool is
     html += "if(remaining<=0){window.location.replace('/');return;}remaining-=1;setTimeout(tick,1000);};tick();})();";
     html += "</script>";
   }
+  html += "<script>";
+  html += "function syncSecret(input){var wrap=input&&input.closest?input.closest('.password-wrap'):null;var btn=wrap&&wrap.querySelector?wrap.querySelector('[data-password-toggle]'):null;var has=!!(input&&input.value);if(wrap&&wrap.classList)wrap.classList.toggle('has-secret',has);if(btn){btn.disabled=!has;if(!has){input.type='password';btn.textContent='Show';}}}";
+  html += "document.addEventListener('input',function(e){syncSecret(e.target);},true);";
+  html += "document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-password-toggle]');if(!b)return;e.preventDefault();var input=document.getElementById(b.getAttribute('data-password-toggle'));if(!input||!input.value){syncSecret(input);return;}var show=input.type==='password';input.type=show?'text':'password';b.textContent=show?'Hide':'Show';});";
+  html += "syncSecret(document.getElementById('setup_pin_unlock'));";
+  html += "</script>";
   html += "</div></body></html>";
   return html;
 }
@@ -772,6 +782,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "input,select{width:100%;box-sizing:border-box;min-height:44px;height:44px;padding:10px 12px;border:1px solid #cfc6b7;border-radius:12px;font-size:16px;line-height:1.2;background:#fdfbf6;color:#171717;}";
   html += "input[type=time]{-webkit-appearance:none;appearance:none;}";
   html += "input[type=password]{letter-spacing:.08em;}";
+  html += ".password-wrap{position:relative;}.password-wrap input{padding-right:12px;}.password-wrap.has-secret input{padding-right:78px;}.password-wrap input[type=text]{letter-spacing:normal;}";
+  html += ".password-toggle{display:none;position:absolute;right:6px;top:6px;min-height:32px;height:32px;padding:0 11px;border-radius:999px;font-size:13px;background:#ded4c2;color:#211d19;}.password-wrap.has-secret .password-toggle{display:block;}";
   html += ".hint{font-size:12px;color:#6b6258;margin-top:6px;line-height:1.45;}";
   html += ".message{padding:14px 16px;border-radius:14px;font-size:14px;line-height:1.45;white-space:pre-line;}";
   html += ".ok{background:#e8f7ea;color:#1d5d2d;}";
@@ -875,9 +887,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String("<div><label for=\"mqtt_server\">MQTT server</label><input id=\"mqtt_server\" name=\"mqtt_server\" maxlength=\"63\" value=\"") + htmlEscape(cfg.mqttServer) + "\"></div>";
   html += String("<div><label for=\"mqtt_port\">MQTT port</label><input id=\"mqtt_port\" name=\"mqtt_port\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"1\" max=\"65535\" value=\"") + String(cfg.mqttPort) + "\"></div>";
   html += String("<div><label for=\"mqtt_user\">MQTT username</label><input id=\"mqtt_user\" name=\"mqtt_user\" maxlength=\"63\" value=\"") + htmlEscape(cfg.mqttUser) + "\"></div>";
-  html += "<div><label for=\"mqtt_pass\">MQTT password</label><input id=\"mqtt_pass\" name=\"mqtt_pass\" type=\"password\" maxlength=\"63\"";
+  html += "<div><label for=\"mqtt_pass\">MQTT password</label><div class=\"password-wrap\"><input id=\"mqtt_pass\" name=\"mqtt_pass\" type=\"password\" maxlength=\"63\"";
   if (hasSavedMqttPassword) html += " placeholder=\"Saved password kept unless replaced\"";
-  html += "><div class=\"hint\">";
+  html += "><button class=\"password-toggle\" type=\"button\" data-password-toggle=\"mqtt_pass\">Show</button></div><div class=\"hint\">";
   html += hasSavedMqttPassword
     ? "Leave blank to keep the saved password. Enter a new value to replace it."
     : "Leave empty only if your MQTT broker does not use a password.";
@@ -954,12 +966,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String("<option value=\"0\"") + selectedAttr(!cfg.setupPinEnabled) + ">Off</option>";
   html += String("<option value=\"1\"") + selectedAttr(cfg.setupPinEnabled) + ">On</option>";
   html += "</select><div class=\"hint\">The clock screens stay unlocked. The PIN is only required before showing the setup page.</div></div>";
-  html += "<div id=\"setup_pin_wrap\"><label for=\"setup_pin\">New setup PIN</label><input id=\"setup_pin\" name=\"setup_pin\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" placeholder=\"6 digits\"><div class=\"hint\">";
+  html += "<div id=\"setup_pin_wrap\"><label for=\"setup_pin\">New setup PIN</label><div class=\"password-wrap\"><input id=\"setup_pin\" name=\"setup_pin\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" placeholder=\"6 digits\"><button class=\"password-toggle\" type=\"button\" data-password-toggle=\"setup_pin\">Show</button></div><div class=\"hint\">";
   html += hasExistingSetupPin
     ? "Leave blank to keep the current PIN. Enter a new 6-digit PIN to replace it."
     : "Enter a new 6-digit PIN if setup protection is enabled.";
   html += "</div></div>";
-  html += "<div id=\"setup_pin_confirm_wrap\"><label for=\"setup_pin_confirm\">Confirm setup PIN</label><input id=\"setup_pin_confirm\" name=\"setup_pin_confirm\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" placeholder=\"Repeat the same 6 digits\"></div>";
+  html += "<div id=\"setup_pin_confirm_wrap\"><label for=\"setup_pin_confirm\">Confirm setup PIN</label><div class=\"password-wrap\"><input id=\"setup_pin_confirm\" name=\"setup_pin_confirm\" type=\"password\" inputmode=\"numeric\" pattern=\"[0-9]*\" maxlength=\"6\" placeholder=\"Repeat the same 6 digits\"><button class=\"password-toggle\" type=\"button\" data-password-toggle=\"setup_pin_confirm\">Show</button></div></div>";
   html += "</div></section>";
 
   html += "<section class=\"card\"><h2>Daily Quote</h2><div class=\"grid\">";
@@ -974,9 +986,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<div class=\"stack\"><div><label for=\"wifi_ssid_select\">Available Wi-Fi</label><div class=\"inline\"><select id=\"wifi_ssid_select\"><option value=\"\">Refresh to scan nearby networks</option></select><button id=\"scan_wifi_button\" class=\"secondary\" type=\"button\">Refresh Wi-Fi List</button></div></div><div class=\"hint\">Choose a scanned Wi-Fi name here, or type one manually below for hidden networks.</div></div>";
   html += "<div class=\"grid\">";
   html += String("<div><label for=\"wifi_ssid\">Wi-Fi SSID</label><input id=\"wifi_ssid\" name=\"wifi_ssid\" maxlength=\"32\" value=\"") + htmlEscape(cfg.wifiSsid) + "\"></div>";
-  html += "<div><label for=\"wifi_pass\">Wi-Fi password</label><input id=\"wifi_pass\" name=\"wifi_pass\" type=\"password\" maxlength=\"64\"";
+  html += "<div><label for=\"wifi_pass\">Wi-Fi password</label><div class=\"password-wrap\"><input id=\"wifi_pass\" name=\"wifi_pass\" type=\"password\" maxlength=\"64\"";
   if (hasSavedWifiPassword) html += " placeholder=\"Saved password kept unless replaced\"";
-  html += "><div class=\"hint\">";
+  html += "><button class=\"password-toggle\" type=\"button\" data-password-toggle=\"wifi_pass\">Show</button></div><div class=\"hint\">";
   html += hasSavedWifiPassword
     ? "Leave blank to keep the saved password. Enter a new value to replace it."
     : "Leave empty only if your home Wi-Fi is open.";
@@ -1043,6 +1055,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function readSource(el){if(!el)return '';return String(typeof el.value==='string'?el.value:el.textContent||'').trim();}";
   html += "function selectSource(el){try{if(el&&el.select){el.focus();el.select();return true;}if(el){var r=document.createRange();r.selectNodeContents(el);var s=window.getSelection();if(s){s.removeAllRanges();s.addRange(r);return true;}}}catch(e){}return false;}";
   html += "function copyFrom(btn){var src=sourceFor(btn.id);var value=readSource(src);if(!value){flash(btn,'Nothing to copy');return;}function copied(){flash(btn,'✓ Copied');}function blocked(err){diag('fallback-copy-failed','Copy failed',err&&err.message?err.message:String(err||''));selectSource(src);flash(btn,'Select + Copy');}try{if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(value).then(copied).catch(blocked);return;}selectSource(src);if(document.execCommand&&document.execCommand('copy'))copied();else blocked('copy blocked');}catch(err){blocked(err);}}";
+  html += "function syncPasswordToggleForInput(input){var wrap=input&&input.closest?input.closest('.password-wrap'):null;var btn=wrap&&wrap.querySelector?wrap.querySelector('[data-password-toggle]'):null;var has=!!(input&&input.value);if(wrap&&wrap.classList)wrap.classList.toggle('has-secret',has);if(btn){btn.disabled=!has;if(!has){input.type='password';btn.textContent='Show';}}}";
+  html += "function syncPasswordToggles(){['wifi_pass','mqtt_pass','setup_pin','setup_pin_confirm'].forEach(function(id){syncPasswordToggleForInput(byId(id));});}";
+  html += "function togglePassword(btn){var input=byId(btn.getAttribute('data-password-toggle')||'');if(!input||!input.value){syncPasswordToggleForInput(input);return;}var show=input.type==='password';input.type=show?'text':'password';btn.textContent=show?'Hide':'Show';}";
   html += "function formParams(){var form=byId('config_form');return form?new URLSearchParams(new FormData(form)):new URLSearchParams();}";
   html += "function postJson(url,params){return fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'}).then(function(r){return r.json();});}";
   html += "function fallbackCurrencyLabel(){var select=byId('currency_code');if(!select)return 'USD';var opt=select.options[select.selectedIndex];return opt?String(opt.textContent||'USD').trim():'USD';}";
@@ -1063,10 +1078,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function setHidden(id,hidden){var el=byId(id);if(el&&el.classList)el.classList.toggle('hidden',!!hidden);}";
   html += "function fallbackSyncSetupState(){fallbackSyncCurrencyLabels();var asset=byId('asset_mode');var mode=byId('portfolio_use_mode');var pin=byId('setup_pin_enabled');var refreshValue=byId('refresh_interval_value');var refreshUnit=byId('refresh_interval_unit');var assetValue=asset?asset.value:'2';var modeValue=mode?mode.value:'0';setHidden('mqtt_card',assetValue!=='0');setHidden('wealth_field_wrap',assetValue!=='1');setHidden('manual_btc_field_wrap',assetValue!=='2');setHidden('borrow_fee_wrap',modeValue!=='1');var pinOn=pin&&pin.value==='1';setHidden('setup_pin_wrap',!pinOn);setHidden('setup_pin_confirm_wrap',!pinOn);var isOneDay=refreshUnit&&refreshUnit.value==='2'&&parseInt(refreshValue&&refreshValue.value?refreshValue.value:'',10)===1;setHidden('wake_time_wrap',!isOneDay);}";
   html += "document.addEventListener('submit',fallbackSave,true);";
-  html += "document.addEventListener('click',function(e){var t=e.target;while(t&&t.tagName!=='BUTTON')t=t.parentNode;if(!t)return;if(/^copy_.*_button$/.test(t.id)){e.preventDefault();e.stopImmediatePropagation();copyFrom(t);return;}if(t.id==='clear_client_diagnostics_button'){e.preventDefault();var txt=byId('client_diagnostics_text');var box=byId('client_diagnostics');if(txt)txt.value='';if(box&&box.classList)box.classList.add('hidden');return;}if(window.fcSetupReady)return;if(t.id==='release_check_button')fallbackRelease(e);else if(t.id==='firmware_install_button')fallbackInstall(e);else if(t.id==='scan_wifi_button')fallbackWifiScan(e);},true);";
+  html += "document.addEventListener('input',function(e){syncPasswordToggleForInput(e.target);},true);";
+  html += "document.addEventListener('click',function(e){var t=e.target;while(t&&t.tagName!=='BUTTON')t=t.parentNode;if(!t)return;if(t.getAttribute&&t.getAttribute('data-password-toggle')){e.preventDefault();e.stopImmediatePropagation();togglePassword(t);return;}if(/^copy_.*_button$/.test(t.id)){e.preventDefault();e.stopImmediatePropagation();copyFrom(t);return;}if(t.id==='clear_client_diagnostics_button'){e.preventDefault();var txt=byId('client_diagnostics_text');var box=byId('client_diagnostics');if(txt)txt.value='';if(box&&box.classList)box.classList.add('hidden');return;}if(window.fcSetupReady)return;if(t.id==='release_check_button')fallbackRelease(e);else if(t.id==='firmware_install_button')fallbackInstall(e);else if(t.id==='scan_wifi_button')fallbackWifiScan(e);},true);";
   html += "['asset_mode','portfolio_use_mode','currency_code','setup_pin_enabled','refresh_interval_value','refresh_interval_unit'].forEach(function(id){var el=byId(id);if(el){el.addEventListener('change',fallbackSyncSetupState);el.addEventListener('input',fallbackSyncSetupState);}});";
   html += "var fallbackWifiSelect=byId('wifi_ssid_select');if(fallbackWifiSelect){fallbackWifiSelect.addEventListener('change',fallbackCopySelectedWifi);fallbackWifiSelect.addEventListener('input',fallbackCopySelectedWifi);}";
-  html += "fallbackSyncSetupState();";
+  html += "fallbackSyncSetupState();syncPasswordToggles();";
   html += "window.fcSetupFallbackReady=true;";
   html += "})();";
   html += "</script>";
@@ -2488,37 +2504,61 @@ static bool startConfigurationPortal() {
   portalUnlocked = !hasSetupPinConfigured(deviceConfig);
   portalBootUnixBase = (lastKnownUnixTime >= 1700000000) ? lastKnownUnixTime : buildTimestamp();
   portalUnlockedAtMs = portalUnlocked ? millis() : 0;
+  portalApStartFailureDetail[0] = '\0';
   savePortalDiagnostics("start-request", "preparing setup access point", deviceConfig.configured);
 
+  Serial.println("[FreedomClock] Setup portal: starting access point");
+  Serial.flush();
+  WiFi.persistent(false);
+  WiFi.setSleep(false);
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
   delay(150);
-  const bool modeOk = WiFi.mode(WIFI_AP_STA);
   buildPortalCredentials();
+  const bool modeOk = WiFi.mode(WIFI_AP);
   const bool apConfigOk = WiFi.softAPConfig(CONFIG_AP_IP, CONFIG_AP_GATEWAY, CONFIG_AP_SUBNET);
   if (!modeOk || !apConfigOk) {
+    snprintf(
+      portalApStartFailureDetail,
+      sizeof(portalApStartFailureDetail),
+      "mode:%d config:%d",
+      modeOk ? 1 : 0,
+      apConfigOk ? 1 : 0
+    );
     savePortalDiagnostics(
       "start-warning",
-      !modeOk ? "WiFi.mode(WIFI_AP_STA) returned false" : "WiFi.softAPConfig returned false",
+      !modeOk ? "WiFi.mode(WIFI_AP) returned false" : "WiFi.softAPConfig returned false",
       deviceConfig.configured
     );
   }
   if (!WiFi.softAP(portalApSsid, portalApPassword)) {
-    savePortalDiagnostics("start-retry", "WiFi.softAP returned false; retrying after WiFi reset", deviceConfig.configured);
+    safeCopyCString(portalApStartFailureDetail, sizeof(portalApStartFailureDetail), "softAP AP mode failed");
+    savePortalDiagnostics("start-retry", "WiFi.softAP returned false in AP mode; retrying after WiFi reset", deviceConfig.configured);
     WiFi.softAPdisconnect(true);
     WiFi.mode(WIFI_OFF);
     delay(300);
-    WiFi.mode(WIFI_AP_STA);
+    WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(CONFIG_AP_IP, CONFIG_AP_GATEWAY, CONFIG_AP_SUBNET);
     if (!WiFi.softAP(portalApSsid, portalApPassword)) {
-      savePortalDiagnostics("start-failed", "WiFi.softAP returned false after retry", deviceConfig.configured);
-      return false;
+      safeCopyCString(portalApStartFailureDetail, sizeof(portalApStartFailureDetail), "softAP AP retry failed");
+      savePortalDiagnostics("start-retry-apsta", "WiFi.softAP returned false in AP mode; retrying AP+STA", deviceConfig.configured);
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_OFF);
+      delay(300);
+      WiFi.mode(WIFI_AP_STA);
+      WiFi.softAPConfig(CONFIG_AP_IP, CONFIG_AP_GATEWAY, CONFIG_AP_SUBNET);
+      if (!WiFi.softAP(portalApSsid, portalApPassword)) {
+        safeCopyCString(portalApStartFailureDetail, sizeof(portalApStartFailureDetail), "softAP AP+STA retry failed");
+        savePortalDiagnostics("start-failed", "WiFi.softAP returned false after AP and AP+STA retries", deviceConfig.configured);
+        return false;
+      }
     }
   }
 
   portalDnsServer.start(CONFIG_DNS_PORT, "*", CONFIG_AP_IP);
   setupPortalRoutes();
   portalServer.begin();
+  portalApStartFailureDetail[0] = '\0';
   savePortalDiagnostics("start-ok", "setup access point started", deviceConfig.configured);
   drawSetupPortalReadyScreen();
   return true;
@@ -2554,8 +2594,37 @@ static void factoryResetAndShowWelcome() {
 
 static void runConfigurationPortal() {
   if (!startConfigurationPortal()) {
-    savePortalDiagnostics("error-screen", "showing setup error because AP startup failed", deviceConfig.configured);
-    drawSetupPortalErrorScreen("AP start failed");
+    // Keep the stored portal diagnostics on the real start failure instead of
+    // overwriting it with this display-only error path.
+    Serial.println("[FreedomClock] Setup portal failed; showing setup error screen");
+    Serial.flush();
+    char stepLine[48];
+    char stateLine[48];
+    char buttonLine[48];
+    snprintf(
+      stepLine,
+      sizeof(stepLine),
+      "STEP: %s",
+      portalApStartFailureDetail[0] ? portalApStartFailureDetail : "unknown"
+    );
+    snprintf(
+      stateLine,
+      sizeof(stateLine),
+      "MODE:%d STA:%d IP:%s",
+      (int)WiFi.getMode(),
+      (int)WiFi.status(),
+      WiFi.softAPIP().toString().c_str()
+    );
+    snprintf(
+      buttonLine,
+      sizeof(buttonLine),
+      "CFG:%d F:%d S:%d H:%luk",
+      deviceConfig.configured ? 1 : 0,
+      digitalRead(PIN_FUNCTION_BUTTON) == LOW ? 1 : 0,
+      digitalRead(PIN_SETUP_BUTTON) == LOW ? 1 : 0,
+      (unsigned long)(ESP.getFreeHeap() / 1024)
+    );
+    drawSetupPortalErrorScreen("AP start failed", stepLine, stateLine, buttonLine);
     delay(10000);
     ESP.restart();
   }
