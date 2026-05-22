@@ -64,6 +64,12 @@ The repository includes an E290 case design in [hardware/case](hardware/case):
 
 The `.stl` files are ready for slicing/printing. The `.scad` file is the source model and can be modified with [OpenSCAD](https://openscad.org/), a free parametric CAD tool, ideal when you want to adjust the case by using some AI.
 
+![Freedom Clock E290 case front](photos/freedom_clock_e290_case_front.jpeg)
+
+![Freedom Clock E290 case back](photos/freedom_clock_e290_case_back.jpeg)
+
+![Freedom Clock E290 case side](photos/freedom_clock_e290_case_side.jpeg)
+
 ## First Setup
 
 On first boot, or after factory reset, the device creates a setup Wi-Fi network:
