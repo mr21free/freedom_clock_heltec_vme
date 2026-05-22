@@ -210,7 +210,8 @@ static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* error
   }
 
   HTTPClient http;
-  http.setTimeout(PRICE_HTTP_TIMEOUT_MS);
+  http.setTimeout(GITHUB_HTTP_TIMEOUT_MS);
+  http.setConnectTimeout(GITHUB_HTTP_TIMEOUT_MS);
   if (!http.begin(secureClient, GITHUB_LATEST_RELEASE_API_URL)) {
     snprintf(errorBuf, errorBufSize, "Could not start GitHub release request.");
     return false;
@@ -226,6 +227,8 @@ static bool fetchLatestGitHubReleaseInfo(GitHubReleaseInfo& outInfo, char* error
       snprintf(errorBuf, errorBufSize, "No published GitHub release found yet.");
     } else if (httpCode == HTTP_CODE_FORBIDDEN || httpCode == 429) {
       snprintf(errorBuf, errorBufSize, "GitHub API rate limited. Try again later.");
+    } else if (httpCode >= 500) {
+      snprintf(errorBuf, errorBufSize, "GitHub is temporarily unavailable (%d). Try again.", httpCode);
     } else {
       snprintf(errorBuf, errorBufSize, "GitHub release request failed (%d).", httpCode);
     }

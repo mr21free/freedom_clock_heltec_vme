@@ -750,7 +750,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   const String lastAppBootDiagnosticsText = loadLastAppBootDiagnosticsText();
   const String lastPortalDiagnosticsText = loadLastPortalDiagnosticsText();
 #endif
-  html.reserve(72000);
+  html.reserve(90000);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
   html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
@@ -999,48 +999,43 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "</div>";
   html += "</div></div></section>";
 
+  {
+    const bool autoOn = cfg.autoUpdateEnabled;
+    html += "<section class=\"card\">";
+    html += "<h2>Software Update</h2>";
+    html += String("<div style=\"font-size:14px;color:#6b6258;margin-top:4px;margin-bottom:14px;\">Current version: ") + FIRMWARE_VERSION + "</div>";
+    html += "<div class=\"grid\"><div><label for=\"auto_update_enabled\">Automatic Updates</label><select id=\"auto_update_enabled\">";
+    html += String("<option value=\"1\"") + selectedAttr(cfg.autoUpdateEnabled) + ">On</option>";
+    html += String("<option value=\"0\"") + selectedAttr(!cfg.autoUpdateEnabled) + ">Off</option>";
+    html += "</select></div></div>";
+    html += String("<div id=\"manual_update_section\" style=\"margin-top:16px;\"") + (autoOn ? " class=\"hidden\"" : "") + ">";
+    html += "<div id=\"release_progress\" class=\"hidden\"><div class=\"install-progress\" style=\"margin-top:14px;\"><div class=\"install-spinner\"></div><div id=\"release_step_text\" class=\"install-step\">Checking...</div></div></div>";
+    html += "<div id=\"release_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+    html += "<div class=\"firmware-head\" style=\"margin-top:16px;\"><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check for Update</button></div>";
+    html += "<div id=\"firmware_form\" style=\"margin-top:16px;\">";
+    html += "<div><label for=\"firmware_file\">Manual software update</label><input id=\"firmware_file\" name=\"firmware_file\" type=\"file\" accept=\".bin,application/octet-stream\"></div>";
+    html += "<div class=\"hint\">Use the ";
+    html += DEVICE_MODEL_NAME;
+    html += " .bin package for this device.</div>";
+    html += "</div>"; // close firmware_form div
+    html += "<div id=\"release_summary\" class=\"releasebox hidden\" style=\"margin-top:14px;\">";
+    html += "<div class=\"row\"><strong>Latest release:</strong> <span id=\"release_latest_version\">--</span></div>";
+    html += "<div class=\"row\"><strong>Notes:</strong></div>";
+    html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
+    html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
+    html += "</div>";
+    html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
+    html += "<div id=\"firmware_progress\" class=\"hidden\"><div class=\"install-progress\"><div class=\"install-spinner\"></div><div id=\"firmware_step_text\" class=\"install-step\">Installing...</div></div></div>";
+    html += "<div id=\"firmware_keep_data_notice\" class=\"hint hidden\" style=\"margin-top:10px;\">Saved data and settings stay on the device with the software update. If settings have not been saved yet, the device returns to setup mode after restart.</div>";
+    html += "<div class=\"actions form-actions\" style=\"margin-top:16px;\"><button id=\"firmware_install_button\" type=\"button\" disabled>Install</button></div>";
+    html += "</div>"; // close manual_update_section
+    html += "</section>";
+  }
+
   html += "<div class=\"actions form-actions\"><button id=\"save_button\" type=\"submit\">Save</button></div>";
   html += "<div id=\"validation_status\" class=\"message info\" style=\"display:none;\"></div>";
   html += String("<input type=\"hidden\" id=\"auto_update_hidden\" name=\"auto_update_enabled\" value=\"") + (cfg.autoUpdateEnabled ? "1" : "0") + "\">";
   html += "</form>";
-
-  html += "<section class=\"card\" style=\"margin-top:16px;\"><h2>Software Update</h2>";
-  html += "<div class=\"grid\" style=\"margin-bottom:16px;\"><div><label for=\"auto_update_enabled\">Automatic Updates</label><select id=\"auto_update_enabled\">";
-  html += String("<option value=\"1\"") + selectedAttr(cfg.autoUpdateEnabled) + ">On</option>";
-  html += String("<option value=\"0\"") + selectedAttr(!cfg.autoUpdateEnabled) + ">Off</option>";
-  html += "</select></div></div>";
-  {
-    const bool autoOn = cfg.autoUpdateEnabled;
-    html += String("<div id=\"auto_update_info\"") + (autoOn ? "" : " class=\"hidden\"") + ">";
-    html += "<div id=\"up_to_date_box\" class=\"message ok hidden\" style=\"margin-bottom:14px;\">";
-    html += "<strong>Freedom Clock is up to date.</strong>";
-    html += String("<div id=\"up_to_date_version\" style=\"color:#555;margin-top:4px;\">") + FIRMWARE_VERSION + "</div>";
-    html += "</div></div>";
-    html += "<div id=\"release_progress\" class=\"hidden\"><div class=\"install-progress\" style=\"margin-top:14px;\"><div class=\"install-spinner\"></div><div id=\"release_step_text\" class=\"install-step\">Checking...</div></div></div>";
-    html += "<div id=\"release_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
-    html += String("<div id=\"manual_update_section\" style=\"margin-top:16px;\"") + (autoOn ? " class=\"hidden\"" : "") + ">";
-  }
-  html += "<div class=\"firmware-head\"><div><label>Current software</label><div class=\"firmware-version\">";
-  html += FIRMWARE_VERSION;
-  html += "</div></div><button id=\"release_check_button\" class=\"secondary\" type=\"button\">Check for Update</button></div>";
-  html += "<form id=\"firmware_form\" method=\"post\" action=\"/firmware\" enctype=\"multipart/form-data\" style=\"margin-top:16px;\">";
-  html += "<div><label for=\"firmware_file\">Manual software update</label><input id=\"firmware_file\" name=\"firmware_file\" type=\"file\" accept=\".bin,application/octet-stream\"></div>";
-  html += "<div class=\"hint\">Use the ";
-  html += DEVICE_MODEL_NAME;
-  html += " .bin package for this device.</div>";
-  html += "</form>";
-  html += "</div>"; // close manual_update_section
-  html += "<div id=\"release_summary\" class=\"releasebox hidden\">";
-  html += "<div class=\"row\"><strong>Latest release:</strong> <span id=\"release_latest_version\">--</span></div>";
-  html += "<div class=\"row\"><strong>Notes:</strong></div>";
-  html += "<div id=\"release_notes\" class=\"release-notes\">--</div>";
-  html += "<div id=\"latest_release_url_row\" class=\"row hidden\"><strong>URL:</strong><div class=\"copyline\"><div id=\"latest_release_url_text\" class=\"copytext\">--</div><button id=\"copy_latest_release_url_button\" class=\"secondary small\" type=\"button\">Copy</button></div></div>";
-  html += "</div>";
-  html += "<div id=\"firmware_status\" class=\"message info\" style=\"display:none;margin-top:14px;\"></div>";
-  html += "<div id=\"firmware_progress\" class=\"hidden\"><div class=\"install-progress\"><div class=\"install-spinner\"></div><div id=\"firmware_step_text\" class=\"install-step\">Installing...</div></div></div>";
-  html += "<div id=\"firmware_keep_data_notice\" class=\"hint hidden\">Saved data and settings stay on the device with the software update. If settings have not been saved yet, the device returns to setup mode after restart.</div>";
-  html += "<div class=\"actions\" style=\"margin-top:14px;\"><button id=\"firmware_install_button\" type=\"button\" disabled>Install</button></div>";
-  html += "</section>";
 
   html += "<script>";
   html += "(function(){";
@@ -1072,16 +1067,18 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += " .bin file.','err');var install=byId('firmware_install_button');if(install)install.disabled=!window.fcFallbackOnlineFirmwareAvailable;}";
   html += "function setProgress(id,stepId,show,text){var box=byId(id);var step=byId(stepId);if(step&&text)step.textContent=text;if(box&&box.classList)box.classList.toggle('hidden',!show);}";
   html += "function fallbackRelease(e){if(window.fcSetupReady)return;e.preventDefault();e.stopPropagation();var btn=byId('release_check_button');if(btn)btn.disabled=true;status('validation_status','','info');status('release_status','','info');setProgress('release_progress','release_step_text',true,'Checking latest software...');postJson('/release-info',formParams()).then(function(data){renderRelease(data);setProgress('release_progress','release_step_text',false,'');if(btn)btn.disabled=false;}).catch(function(err){diag('fallback-release-failed','Release check failed',err&&err.stack?err.stack:String(err||''));status('release_status','Could not check for updates. See diagnostics at the top of the page.','err');setProgress('release_progress','release_step_text',false,'');if(btn)btn.disabled=false;});}";
-  html += "function fallbackInstall(e){if(window.fcSetupReady)return;e.preventDefault();var file=byId('firmware_file');var form=byId('firmware_form');if(file&&file.files&&file.files.length&&form){overlay('Uploading software. Keep this phone connected until the device restarts...');form.submit();return;}if(!window.fcFallbackOnlineFirmwareAvailable){status('firmware_status','Choose a software .bin file or check for a newer release first.','err');return;}overlay('Installing software. Keep this phone connected until the device restarts...');postJson('/firmware-online',formParams()).then(function(data){if(data&&data.ok){overlayHtml('Software installed.<br>Device is restarting...');status('firmware_status',data.message||'Software installed. Device is restarting.','ok');}else{hideOverlay();status('firmware_status',(data&&data.error)||'Software install failed.','err');}}).catch(function(err){diag('fallback-install-failed','Software install failed',err&&err.stack?err.stack:String(err||''));hideOverlay();status('firmware_status','Software install failed. See diagnostics at the top of the page.','err');});}";
+  html += "function fallbackInstall(e){if(window.fcSetupReady)return;e.preventDefault();var file=byId('firmware_file');if(file&&file.files&&file.files.length){overlay('Uploading software. Stay connected until the device restarts...');var fd=new FormData();fd.append('firmware_file',file.files[0]);fetch('/firmware?_fc_fetch=1',{method:'POST',body:fd,cache:'no-store'}).catch(function(){});return;}if(!window.fcFallbackOnlineFirmwareAvailable){status('firmware_status','Choose a software .bin file or check for a newer release first.','err');return;}overlay('Installing software. Stay connected until the device restarts...');postJson('/firmware-online',formParams()).then(function(data){if(data&&data.ok){overlayHtml('Software installed.<br>Device is restarting...');status('firmware_status',data.message||'Software installed. Device is restarting.','ok');}else{hideOverlay();status('firmware_status',(data&&data.error)||'Software install failed.','err');}}).catch(function(err){diag('fallback-install-failed','Software install failed',err&&err.stack?err.stack:String(err||''));hideOverlay();status('firmware_status','Software install failed. See diagnostics at the top of the page.','err');});}";
   html += "function fallbackCopySelectedWifi(){var select=byId('wifi_ssid_select');var input=byId('wifi_ssid');if(select&&input&&select.value)input.value=select.value;}";
   html += "function fallbackWifiScan(e){if(window.fcSetupReady)return;e.preventDefault();var select=byId('wifi_ssid_select');if(select){select.disabled=true;select.innerHTML='<option value=\"\">Scanning nearby networks...</option>';}fetch('/wifi-list',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){if(!select)return;var current=(byId('wifi_ssid')&&byId('wifi_ssid').value)||'';var networks=data&&Array.isArray(data.networks)?data.networks:[];select.innerHTML='<option value=\"\">'+(networks.length?'Choose a nearby network':'No networks found')+'</option>';networks.forEach(function(n){var opt=document.createElement('option');opt.value=n.ssid||'';opt.textContent=n.ssid||'';if(current&&n.ssid===current)opt.selected=true;select.appendChild(opt);});select.disabled=false;fallbackCopySelectedWifi();}).catch(function(err){diag('fallback-wifi-scan-failed','Wi-Fi scan failed',err&&err.stack?err.stack:String(err||''));if(select){select.innerHTML='<option value=\"\">Scan failed - type Wi-Fi name manually</option>';select.disabled=false;}});}";
   html += "function setHidden(id,hidden){var el=byId(id);if(el&&el.classList)el.classList.toggle('hidden',!!hidden);}";
-  html += "function fallbackSyncSetupState(){fallbackSyncCurrencyLabels();var asset=byId('asset_mode');var mode=byId('portfolio_use_mode');var pin=byId('setup_pin_enabled');var refreshValue=byId('refresh_interval_value');var refreshUnit=byId('refresh_interval_unit');var assetValue=asset?asset.value:'2';var modeValue=mode?mode.value:'0';setHidden('mqtt_card',assetValue!=='0');setHidden('wealth_field_wrap',assetValue!=='1');setHidden('manual_btc_field_wrap',assetValue!=='2');setHidden('borrow_fee_wrap',modeValue!=='1');var pinOn=pin&&pin.value==='1';setHidden('setup_pin_wrap',!pinOn);setHidden('setup_pin_confirm_wrap',!pinOn);var isOneDay=refreshUnit&&refreshUnit.value==='2'&&parseInt(refreshValue&&refreshValue.value?refreshValue.value:'',10)===1;setHidden('wake_time_wrap',!isOneDay);}";
+  html += "function fallbackSyncAutoUpdate(){var au=byId('auto_update_enabled');var isAuto=au&&au.value==='1';setHidden('manual_update_section',isAuto);}";
+  html += "function fallbackSyncSetupState(){fallbackSyncCurrencyLabels();fallbackSyncAutoUpdate();var asset=byId('asset_mode');var mode=byId('portfolio_use_mode');var pin=byId('setup_pin_enabled');var refreshValue=byId('refresh_interval_value');var refreshUnit=byId('refresh_interval_unit');var assetValue=asset?asset.value:'2';var modeValue=mode?mode.value:'0';setHidden('mqtt_card',assetValue!=='0');setHidden('wealth_field_wrap',assetValue!=='1');setHidden('manual_btc_field_wrap',assetValue!=='2');setHidden('borrow_fee_wrap',modeValue!=='1');var pinOn=pin&&pin.value==='1';setHidden('setup_pin_wrap',!pinOn);setHidden('setup_pin_confirm_wrap',!pinOn);var isOneDay=refreshUnit&&refreshUnit.value==='2'&&parseInt(refreshValue&&refreshValue.value?refreshValue.value:'',10)===1;setHidden('wake_time_wrap',!isOneDay);}";
   html += "document.addEventListener('submit',fallbackSave,true);";
   html += "document.addEventListener('input',function(e){syncPasswordToggleForInput(e.target);},true);";
   html += "document.addEventListener('click',function(e){var t=e.target;while(t&&t.tagName!=='BUTTON')t=t.parentNode;if(!t)return;if(t.getAttribute&&t.getAttribute('data-password-toggle')){e.preventDefault();e.stopImmediatePropagation();togglePassword(t);return;}if(/^copy_.*_button$/.test(t.id)){e.preventDefault();e.stopImmediatePropagation();copyFrom(t);return;}if(t.id==='clear_client_diagnostics_button'){e.preventDefault();var txt=byId('client_diagnostics_text');var box=byId('client_diagnostics');if(txt)txt.value='';if(box&&box.classList)box.classList.add('hidden');return;}if(window.fcSetupReady)return;if(t.id==='release_check_button')fallbackRelease(e);else if(t.id==='firmware_install_button')fallbackInstall(e);else if(t.id==='scan_wifi_button')fallbackWifiScan(e);},true);";
-  html += "['asset_mode','portfolio_use_mode','currency_code','setup_pin_enabled','refresh_interval_value','refresh_interval_unit'].forEach(function(id){var el=byId(id);if(el){el.addEventListener('change',fallbackSyncSetupState);el.addEventListener('input',fallbackSyncSetupState);}});";
+  html += "['asset_mode','portfolio_use_mode','currency_code','setup_pin_enabled','refresh_interval_value','refresh_interval_unit','auto_update_enabled'].forEach(function(id){var el=byId(id);if(el){el.addEventListener('change',fallbackSyncSetupState);el.addEventListener('input',fallbackSyncSetupState);}});";
   html += "var fallbackWifiSelect=byId('wifi_ssid_select');if(fallbackWifiSelect){fallbackWifiSelect.addEventListener('change',fallbackCopySelectedWifi);fallbackWifiSelect.addEventListener('input',fallbackCopySelectedWifi);}";
+  html += "var fallbackFirmwareFile=byId('firmware_file');if(fallbackFirmwareFile){fallbackFirmwareFile.addEventListener('change',function(){if(window.fcSetupReady)return;var btn=byId('firmware_install_button');if(btn)btn.disabled=!(fallbackFirmwareFile.files&&fallbackFirmwareFile.files.length>0);});}";
   html += "fallbackSyncSetupState();syncPasswordToggles();";
   html += "window.fcSetupFallbackReady=true;";
   html += "})();";
@@ -1171,10 +1168,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const wakeTimeWrap=document.getElementById('wake_time_wrap');";
   html += "const wakeTimeHint=document.getElementById('wake_time_hint');";
   html += "const autoUpdateSelect=document.getElementById('auto_update_enabled');";
-  html += "const autoUpdateInfo=document.getElementById('auto_update_info');";
   html += "const manualUpdateSection=document.getElementById('manual_update_section');";
-  html += "const upToDateBox=document.getElementById('up_to_date_box');";
-  html += "const upToDateVersion=document.getElementById('up_to_date_version');";
   html += "const autoUpdateHidden=document.getElementById('auto_update_hidden');";
   html += "const scanButton=document.getElementById('scan_wifi_button');";
   html += "const saveButton=document.getElementById('save_button');";
@@ -1282,13 +1276,13 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += GITHUB_RELEASES_URL;
   html += "';const latestNormalized=normalizeVersion(latestTag);const currentNormalized=normalizeVersion('";
   html += FIRMWARE_VERSION;
-  html += "');updateFirmwareInstallButton();if(!assetAvailable){setReleaseStatus('Latest GitHub release was found, but it does not include the expected ";
+  html += "');updateFirmwareInstallButton();if(manualUpdateSection&&!(autoUpdateSelect&&autoUpdateSelect.value==='1'))manualUpdateSection.classList.toggle('hidden',onlineFirmwareAvailable);if(!assetAvailable){setReleaseStatus('Latest GitHub release was found, but it does not include the expected ";
   html += DEVICE_MODEL_NAME;
   html += " software package. Use manual update with the ";
   html += DEVICE_MODEL_NAME;
   html += " .bin file.','err');setFirmwareStatus('Matching online software package was not found. Use the ";
   html += DEVICE_MODEL_NAME;
-  html += " .bin package for manual update.','err');return;}if(!newer){const isAuto=autoUpdateSelect&&autoUpdateSelect.value==='1';if(isAuto&&upToDateBox){upToDateBox.classList.remove('hidden');}else{setReleaseStatus('You are using the latest version.','ok');}return;}if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');setReleaseStatus('New software is available.','ok');}";
+  html += " .bin package for manual update.','err');return;}if(!newer){setReleaseStatus('You are using the latest version.','ok');return;}if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');setReleaseStatus('New software is available.','ok');}";
   html += "function readNumber(id){const el=document.getElementById(id);const value=parseFloat(el&&el.value?el.value:'');return Number.isFinite(value)?value:0;}";
   html += "function selectedCurrencyLabel(){if(!currencySelect)return 'USD';const opt=currencySelect.options[currencySelect.selectedIndex];return opt?String(opt.textContent||'USD').trim():'USD';}";
   html += "function updateCurrencyLabels(){const cur=selectedCurrencyLabel();if(manualBtcCurrencyHint)manualBtcCurrencyHint.textContent='BTC/'+cur+' price is fetched from CoinGecko over the internet, with mempool.space as backup.';if(wealthCurrencyLabel)wealthCurrencyLabel.textContent='Static wealth ('+cur+')';if(monthlyCurrencyLabel)monthlyCurrencyLabel.textContent='Monthly expenses ('+cur+')';if(topicPriceCurrencyLabel)topicPriceCurrencyLabel.textContent='BTC price topic ('+cur+')';if(wealthPrivacyCurrencyLabel)wealthPrivacyCurrencyLabel.textContent=cur;if(settingsPrivacyCurrencyLabel)settingsPrivacyCurrencyLabel.textContent=cur;}";
@@ -1301,7 +1295,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
   html += "function updateRefreshControls(clampValue){if(!refreshValueInput)return;const settings=refreshSettingsForUnit();refreshValueInput.min=String(settings.min);refreshValueInput.max=String(settings.max);refreshValueInput.step='1';let value=parseInt(refreshValueInput.value||'',10);if(clampValue!==false){if(!Number.isFinite(value))value=settings.min;if(value<settings.min)value=settings.min;if(value>settings.max)value=settings.max;refreshValueInput.value=String(value);}const currentValue=Number.isFinite(value)?value:0;if(refreshHint)refreshHint.textContent=settings.hint;const isOneDay=refreshUnitSelect&&refreshUnitSelect.value==='2'&&currentValue===1;if(wakeTimeWrap)wakeTimeWrap.classList.toggle('hidden',!isOneDay);if(wakeTimeHint)wakeTimeHint.textContent='The device refreshes once per day at this local time in the selected UTC zone. DST-aware zones adjust automatically.';}";
   html += "function onRefreshValueInput(){updateRefreshControls(false);}";
-  html += "function updateAutoUpdateUI(){const isAuto=autoUpdateSelect&&autoUpdateSelect.value==='1';if(autoUpdateHidden)autoUpdateHidden.value=autoUpdateSelect?autoUpdateSelect.value:'1';if(autoUpdateInfo)autoUpdateInfo.classList.toggle('hidden',!isAuto);if(manualUpdateSection)manualUpdateSection.classList.toggle('hidden',isAuto);if(upToDateBox)upToDateBox.classList.add('hidden');hideReleaseSummary();setReleaseStatus('','info');if(isAuto&&autoUpdateUiInitialized)checkLatestRelease(null);}";
+  html += "function updateAutoUpdateUI(){const isAuto=autoUpdateSelect&&autoUpdateSelect.value==='1';if(autoUpdateHidden)autoUpdateHidden.value=autoUpdateSelect?autoUpdateSelect.value:'1';if(manualUpdateSection)manualUpdateSection.classList.toggle('hidden',isAuto);hideReleaseSummary();setReleaseStatus('','info');if(isAuto&&autoUpdateUiInitialized)checkLatestRelease(null);}";
   html += "function update(){";
   html += "const isMqttBtc=asset&&asset.value==='0';";
   html += "const isWealth=asset&&asset.value==='1';";
@@ -1347,22 +1341,24 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(handleUnlockRequired(data,setReleaseStatus))return;";
   html += "if(!data.ok){setReleaseStatus(data.message||'Could not load release info.','err');return;}";
   html += "renderReleaseInfo(data);";
-  html += "}catch(err){appendClientDiagnostic('release-check-failed','Release check failed',err&&err.stack?err.stack:String(err||''));setReleaseStatus('Release check failed. Keep this phone connected and make sure the device can reach the internet over Wi-Fi.','err');}";
+  html += "}catch(err){appendClientDiagnostic('release-check-failed','Release check failed',err&&err.stack?err.stack:String(err||''));setReleaseStatus('Release check failed. Make sure the device can reach the internet over Wi-Fi.','err');}";
   html += "finally{stopReleaseProgress();releaseCheckInFlight=false;if(actionButton){restoreScrollPosition(previousScrollY,actionButton);clearRememberedScrollPositionSoon();}}";
   html += "}";
   html += "function validateManualFirmwareFile(){if(!firmwareFileInput||!firmwareFileInput.files||firmwareFileInput.files.length===0){setFirmwareStatus('Choose a software .bin file first.','err');return false;}const fileName=String((firmwareFileInput.files[0]&&firmwareFileInput.files[0].name)||'').toLowerCase();if(!fileName.endsWith('.bin')){setFirmwareStatus('Software file must end with .bin.','err');return false;}return true;}";
   html += "const installSteps=[{ms:0,text:'Preparing online software update...'},{ms:6000,text:'Connecting to Wi-Fi and GitHub...'},{ms:12000,text:'Downloading and installing software...'},{ms:24000,text:'Device may restart any moment...'},{ms:40000,text:'Waiting for setup Wi-Fi to disconnect...'}];";
-  html += "function startFirmwareProgress(){";
+  html += "const uploadSteps=[{ms:0,text:'Uploading software...'},{ms:8000,text:'Installing software...'},{ms:20000,text:'Device may restart any moment...'},{ms:35000,text:'Waiting for setup Wi-Fi to disconnect...'}];";
+  html += "function startFirmwareProgress(steps){";
+  html += "const activeSteps=steps||installSteps;";
   html += "firmwareProgressStart=Date.now();";
   html += "firmwareFinishHandled=false;";
   html += "if(firmwareProgress)firmwareProgress.classList.add('hidden');";
-  html += "showActionOverlay(installSteps[0].text);";
+  html += "showActionOverlay(activeSteps[0].text);";
   html += "setFirmwareStatus('','info');";
-  html += "if(firmwareStepText)firmwareStepText.textContent=installSteps[0].text;";
+  html += "if(firmwareStepText)firmwareStepText.textContent=activeSteps[0].text;";
   html += "firmwareProgressInterval=setInterval(function(){";
   html += "const elapsed=Date.now()-firmwareProgressStart;";
-  html += "let step=installSteps[0];";
-  html += "for(let i=1;i<installSteps.length;i++){if(elapsed>=installSteps[i].ms)step=installSteps[i];}";
+  html += "let step=activeSteps[0];";
+  html += "for(let i=1;i<activeSteps.length;i++){if(elapsed>=activeSteps[i].ms)step=activeSteps[i];}";
   html += "setActionOverlayText(step.text);";
   html += "if(firmwareStepText)firmwareStepText.textContent=step.text;";
   html += "},500);}";
@@ -1385,7 +1381,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
   html += "startFirmwareProgress();";
   html += "startFirmwareDisconnectMonitor();";
-  html += "setReleaseStatus('Installing software from GitHub. Keep this phone connected. The device will restart when finished.','info');";
+  html += "setReleaseStatus('Installing software from GitHub. Stay connected — device will restart.','info');";
   html += "let keepInstallOverlay=false;";
   html += "try{";
   html += "const response=await fetch('/firmware-online',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:form?new URLSearchParams(new FormData(form)).toString():'',cache:'no-store'});";
@@ -1396,7 +1392,26 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "}catch(err){appendClientDiagnostic('firmware-install-failed','Software install request failed',err&&err.stack?err.stack:String(err||''));if(firmwareFinishHandled)return;const elapsed=Date.now()-firmwareProgressStart;if(elapsed>18000){keepInstallOverlay=true;showFirmwareRestartedState('Connection closed while the device was updating.<br>Device is restarting...');return;}const message='Software install request failed. Use manual update if the device does not restart.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');}";
   html += "finally{if(!keepInstallOverlay&&!firmwareFinishHandled)stopFirmwareProgress();firmwareInstallInFlight=false;if(releaseCheckButton)releaseCheckButton.disabled=false;updateFirmwareInstallButton();}";
   html += "}";
-  html += "function installSelectedFirmware(){if(hasManualFirmwareFile()){if(!validateManualFirmwareFile())return;if(firmwareInstallButton)firmwareInstallButton.disabled=true;if(firmwareKeepDataNotice)firmwareKeepDataNotice.classList.add('hidden');showActionOverlay('Uploading software. Keep this phone connected until the device restarts...');setFirmwareStatus('Uploading software. Keep this phone connected until the device restarts.','info');if(firmwareForm)firmwareForm.submit();return;}if(onlineFirmwareAvailable){installOnlineFirmware();return;}const message='Choose a software .bin file or check for a newer release first.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');";
+  html += "async function installManualFirmware(){";
+  html += "if(firmwareInstallInFlight)return;";
+  html += "firmwareInstallInFlight=true;";
+  html += "updateFirmwareInstallButton();";
+  html += "if(releaseCheckButton)releaseCheckButton.disabled=true;";
+  html += "startFirmwareProgress(uploadSteps);";
+  html += "startFirmwareDisconnectMonitor();";
+  html += "setFirmwareStatus('Uploading software. Stay connected until the device restarts.','info');";
+  html += "let keepInstallOverlay=false;";
+  html += "try{";
+  html += "const fd=new FormData();if(firmwareFileInput&&firmwareFileInput.files&&firmwareFileInput.files[0])fd.append('firmware_file',firmwareFileInput.files[0]);";
+  html += "const response=await fetch('/firmware?_fc_fetch=1',{method:'POST',body:fd,cache:'no-store'});";
+  html += "const data=await response.json();";
+  html += "if(handleUnlockRequired(data,setFirmwareStatus))return;";
+  html += "if(!data.ok){const message=data.message||'Software install failed.';setFirmwareStatus(message,'err');return;}";
+  html += "keepInstallOverlay=true;setFirmwareStatus(data.message||'Software installed. Restarting...','ok');finishFirmwareInstallExperience('Software installed.');";
+  html += "}catch(err){appendClientDiagnostic('manual-firmware-failed','Manual software install failed',err&&err.stack?err.stack:String(err||''));if(firmwareFinishHandled)return;const elapsed=Date.now()-firmwareProgressStart;if(elapsed>18000){keepInstallOverlay=true;showFirmwareRestartedState('Connection closed while the device was updating.<br>Device is restarting...');return;}const message='Software upload failed. Check the file and try again.';setFirmwareStatus(message,'err');}";
+  html += "finally{if(!keepInstallOverlay&&!firmwareFinishHandled)stopFirmwareProgress();firmwareInstallInFlight=false;if(releaseCheckButton)releaseCheckButton.disabled=false;updateFirmwareInstallButton();}";
+  html += "}";
+  html += "function installSelectedFirmware(){if(hasManualFirmwareFile()){if(!validateManualFirmwareFile())return;installManualFirmware();return;}if(onlineFirmwareAvailable){installOnlineFirmware();return;}const message='Choose a software .bin file or check for a newer release first.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');";
   html += "}";
   html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();}";
   html += "if(asset) asset.addEventListener('change', update);";
@@ -1411,7 +1426,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(wifiPassInput) wifiPassInput.addEventListener('input', function(){if(clearWifiPass&&wifiPassInput.value)clearWifiPass.checked=false;});";
   html += "if(mqttPassInput) mqttPassInput.addEventListener('input', function(){if(clearMqttPass&&mqttPassInput.value)clearMqttPass.checked=false;});";
   html += "if(wifiSelect){const copySelectedWifi=function(){if(wifiSsidInput&&wifiSelect.value)wifiSsidInput.value=wifiSelect.value;};wifiSelect.addEventListener('change',copySelectedWifi);wifiSelect.addEventListener('input',copySelectedWifi);}";
-  html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', async function(event){event.preventDefault();if(saveInFlight)return;saveInFlight=true;const saveOverlay=document.getElementById('save_overlay');const saveOverlayText=document.getElementById('save_overlay_text');const focusGuard=document.getElementById('focus_guard');setStatus('','info');if(focusGuard)try{focusGuard.focus({preventScroll:true});}catch(e){}document.body.style.overflow='hidden';if(saveOverlay)saveOverlay.classList.remove('hidden');if(saveOverlayText)saveOverlayText.textContent='Checking settings…';function returnFocusToSave(){const sb=document.getElementById('save_button');if(sb)try{sb.focus({preventScroll:true});}catch(e){}}function abortSave(msg){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;if(msg)setStatus(msg,'err');}try{const params=new URLSearchParams(new FormData(form));let vData;try{const vResponse=await fetchWithTimeout('/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},60000);vData=await vResponse.json();}catch(e){appendClientDiagnostic('validate-fetch-failed','Settings check failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Settings check timed out. Reconnect to the device Wi-Fi and try again.':'Settings check failed. Keep this phone connected and try again.');return;}if(handleUnlockRequired(vData,setStatus)){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;return;}if(!vData.ok){abortSave(vData.message||'Settings check failed.');return;}capturePreviewMarketValues(vData.message||'');updateFreedomPreview();if(saveOverlayText)saveOverlayText.textContent='Saving settings…';params.set('_fc_fetch','1');try{const sResponse=await fetchWithTimeout('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},15000);const sData=await sResponse.json();if(!sData.ok){abortSave(sData.error||'Failed to save settings.');return;}}catch(e){appendClientDiagnostic('save-fetch-failed','Save request failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Save timed out. Reconnect to the device Wi-Fi and try again.':'Failed to save settings. Keep this phone connected and try again.');return;}if(saveOverlayText)saveOverlayText.innerHTML='Settings saved!<br>Device is restarting…';}catch(err){appendClientDiagnostic('save-handler-error','Save handler error',err&&err.stack?err.stack:String(err||''));abortSave('An error occurred. Please try again.');}});if(saveButton)saveButton.disabled=false;}";
+  html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', async function(event){event.preventDefault();if(saveInFlight)return;saveInFlight=true;const saveOverlay=document.getElementById('save_overlay');const saveOverlayText=document.getElementById('save_overlay_text');const focusGuard=document.getElementById('focus_guard');setStatus('','info');if(focusGuard)try{focusGuard.focus({preventScroll:true});}catch(e){}document.body.style.overflow='hidden';if(saveOverlay)saveOverlay.classList.remove('hidden');if(saveOverlayText)saveOverlayText.textContent='Checking settings…';function returnFocusToSave(){const sb=document.getElementById('save_button');if(sb)try{sb.focus({preventScroll:true});}catch(e){}}function abortSave(msg){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;if(msg)setStatus(msg,'err');}try{const params=new URLSearchParams(new FormData(form));let vData;try{const vResponse=await fetchWithTimeout('/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},60000);vData=await vResponse.json();}catch(e){appendClientDiagnostic('validate-fetch-failed','Settings check failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Settings check timed out. Reconnect to the device Wi-Fi and try again.':'Settings check failed. Stay connected and try again.');return;}if(handleUnlockRequired(vData,setStatus)){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;return;}if(!vData.ok){abortSave(vData.message||'Settings check failed.');return;}capturePreviewMarketValues(vData.message||'');updateFreedomPreview();if(saveOverlayText)saveOverlayText.textContent='Saving settings…';params.set('_fc_fetch','1');try{const sResponse=await fetchWithTimeout('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},15000);const sData=await sResponse.json();if(!sData.ok){abortSave(sData.error||'Failed to save settings.');return;}}catch(e){appendClientDiagnostic('save-fetch-failed','Save request failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Save timed out. Reconnect to the device Wi-Fi and try again.':'Failed to save settings. Stay connected and try again.');return;}if(saveOverlayText)saveOverlayText.innerHTML='Settings saved!<br>Device is restarting…';}catch(err){appendClientDiagnostic('save-handler-error','Save handler error',err&&err.stack?err.stack:String(err||''));abortSave('An error occurred. Please try again.');}});if(saveButton)saveButton.disabled=false;}";
   html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){setFirmwareStatus('', 'info');updateFirmwareInstallButton();});";
   html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
   html += "if(firmwareInstallButton) firmwareInstallButton.addEventListener('click', installSelectedFirmware);";
@@ -1809,23 +1824,35 @@ static void handlePortalFirmwareUpload() {
 }
 
 static void handlePortalFirmwareUploadComplete() {
+  const bool wantsJson = portalServer.arg("_fc_fetch") == "1";
+
   if (requirePortalUnlock("Enter the setup PIN to update firmware.")) {
     resetPortalFirmwareUploadState();
+    if (wantsJson) portalSendUnlockRequiredJson();
     return;
   }
 
   if (!portalFirmwareUploadStarted) {
-    portalSendHtml(buildPortalPage(deviceConfig, "Choose a firmware .bin file first.", true));
     resetPortalFirmwareUploadState();
+    if (wantsJson) {
+      portalSendJson(false, "Choose a firmware .bin file first.");
+    } else {
+      portalSendHtml(buildPortalPage(deviceConfig, "Choose a firmware .bin file first.", true));
+    }
     return;
   }
 
   if (portalFirmwareUploadFailed || !portalFirmwareUploadSucceeded) {
-    const char* message = portalFirmwareUploadMessage[0] != '\0'
-      ? portalFirmwareUploadMessage
-      : "Firmware upload failed.";
-    portalSendHtml(buildPortalPage(deviceConfig, message, true));
+    char errorMsg[PORTAL_FIRMWARE_MESSAGE_SIZE];
+    strlcpy(errorMsg,
+      portalFirmwareUploadMessage[0] != '\0' ? portalFirmwareUploadMessage : "Firmware upload failed.",
+      sizeof(errorMsg));
     resetPortalFirmwareUploadState();
+    if (wantsJson) {
+      portalSendJson(false, errorMsg);
+    } else {
+      portalSendHtml(buildPortalPage(deviceConfig, errorMsg, true));
+    }
     return;
   }
 
@@ -1833,10 +1860,14 @@ static void handlePortalFirmwareUploadComplete() {
   preparePostFirmwareUpdateBoot();
   portalExitAction = PORTAL_EXIT_ACTION_FIRMWARE_UPDATE;
   portalSaveRequested = true;
-  portalSendHtml(buildPortalConfirmationPage(
-    "FIRMWARE UPDATED",
-    "Restarting..."
-  ));
+  if (wantsJson) {
+    portalSendJson(true, "Software installed.\nRestarting...");
+  } else {
+    portalSendHtml(buildPortalConfirmationPage(
+      "FIRMWARE UPDATED",
+      "Restarting..."
+    ));
+  }
 }
 
 static bool installFirmwareFromUrl(const String& firmwareUrl, char* errorBuf, size_t errorBufSize) {
@@ -2035,12 +2066,9 @@ static void s_gitHubTask(void* param) {
   vTaskDelete(nullptr);
 }
 static bool fetchGitHubInTask(GitHubReleaseInfo& outInfo, char* errorBuf, size_t errorBufSize) {
-  GitHubTaskCtx ctx;
-  ctx.errorBuf[0] = '\0';
-  ctx.done = false;
-  ctx.success = false;
+  GitHubTaskCtx ctx = {};
   TaskHandle_t handle = nullptr;
-  if (xTaskCreate(s_gitHubTask, "gh_fetch", HTTPS_TASK_STACK, &ctx, 1, &handle) != pdPASS) {
+  if (xTaskCreatePinnedToCore(s_gitHubTask, "gh_fetch", 32768, &ctx, 1, &handle, 1) != pdPASS) {
     return fetchLatestGitHubReleaseInfo(outInfo, errorBuf, errorBufSize);
   }
   const uint32_t start = millis();
