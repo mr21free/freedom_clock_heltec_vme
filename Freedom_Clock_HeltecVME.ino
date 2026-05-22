@@ -671,7 +671,11 @@ void setup() {
     coveredPercent = clampInt((int)(coverageRatio * 100.0f + 0.5f), 0, 999);
   }
 
-  if (manualScreenRefresh && !manualFastModeActive) {
+  // Fast mode (partial refresh) only makes sense when a pending frame was
+  // already shown and the final update is windowed on top of it. Without a
+  // pending frame (e.g. static wealth mode) the panel never gets a clean base
+  // image, so pixels from the previous screen ghost through.
+  if (manualScreenRefresh && manualExternalDataRefresh && !manualFastModeActive) {
     display.fastmodeOn(false);
     manualFastModeActive = true;
   }
