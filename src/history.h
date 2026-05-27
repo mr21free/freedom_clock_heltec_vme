@@ -2,7 +2,6 @@
 
 static void clearBatteryLogInMemory(BatteryLog& log) {
   memset(&log, 0, sizeof(log));
-  log.version = BATTERY_LOG_VERSION;
 }
 
 static bool loadBatteryLog(BatteryLog& log) {
@@ -18,7 +17,7 @@ static bool loadBatteryLog(BatteryLog& log) {
   }
   preferences.end();
 
-  if (log.version != BATTERY_LOG_VERSION || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+  if (log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
     clearBatteryLogInMemory(log);
     return false;
   }
@@ -45,44 +44,54 @@ static bool clearBatteryLog() {
 
 static bool appendBatteryLogSample(BatteryLog& log, time_t now, float voltage, int percent) {
   if (!(voltage > 0.0f)) return false;
-  if (log.version != BATTERY_LOG_VERSION || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+  if (log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
     clearBatteryLogInMemory(log);
   }
 
-  const uint8_t index = log.nextIndex;
+  const uint16_t index = log.nextIndex;
   log.nextSampleId++;
   if (log.nextSampleId == 0) log.nextSampleId = 1;
-  log.sampleId[index] = log.nextSampleId;
   log.unixTime[index] = (now >= 1700000000) ? (uint32_t)now : 0;
   log.millivolts[index] = (uint16_t)clampInt((int)(voltage * 1000.0f + 0.5f), 0, 65535);
   log.percent[index] = (uint8_t)clampInt(percent, 0, 100);
 
-  log.nextIndex = (uint8_t)((index + 1) % BATTERY_LOG_SAMPLES);
+  log.nextIndex = (uint16_t)((index + 1) % BATTERY_LOG_SAMPLES);
   if (log.count < BATTERY_LOG_SAMPLES) log.count++;
   return true;
 }
 
 static String buildBatteryLogText(const BatteryLog& log) {
   String out;
-  out.reserve(2200);
+  out.reserve(220 + ((size_t)log.count * 48));
   out += "Battery calibration log\n";
   out += "Format: sample, unix_time, voltage, percent\n";
   out += "Newest sample is last.\n\n";
 
-  if (log.version != BATTERY_LOG_VERSION || log.count == 0 || log.count > BATTERY_LOG_SAMPLES) {
+  if (log.count == 0 || log.count > BATTERY_LOG_SAMPLES) {
     out += "No battery samples recorded yet.";
     return out;
   }
 
-  const uint8_t firstIndex = (log.count == BATTERY_LOG_SAMPLES) ? log.nextIndex : 0;
-  for (uint8_t i = 0; i < log.count; i++) {
-    const uint8_t index = (uint8_t)((firstIndex + i) % BATTERY_LOG_SAMPLES);
+  char summary[96];
+  snprintf(
+    summary,
+    sizeof(summary),
+    "Stored samples: %u / %u\n\n",
+    (unsigned int)log.count,
+    (unsigned int)BATTERY_LOG_SAMPLES
+  );
+  out += summary;
+
+  const uint16_t firstIndex = (log.count == BATTERY_LOG_SAMPLES) ? log.nextIndex : 0;
+  const uint32_t firstSampleId = (log.nextSampleId >= log.count) ? (log.nextSampleId - log.count + 1) : 1;
+  for (uint16_t i = 0; i < log.count; i++) {
+    const uint16_t index = (uint16_t)((firstIndex + i) % BATTERY_LOG_SAMPLES);
     char line[80];
     snprintf(
       line,
       sizeof(line),
       "#%lu, t=%lu, v=%.2fV, p=%u%%\n",
-      (unsigned long)log.sampleId[index],
+      (unsigned long)(firstSampleId + i),
       (unsigned long)log.unixTime[index],
       (double)log.millivolts[index] / 1000.0,
       (unsigned int)log.percent[index]

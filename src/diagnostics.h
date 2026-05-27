@@ -162,6 +162,11 @@ static void saveLastAppBootDiagnostics(
   appendDiagnosticNumber(out, "Final frame window w", finalFrameWindowW);
   appendDiagnosticNumber(out, "Final frame window h", finalFrameWindowH);
   appendDiagnosticLine(out, "WiFi OK", boolText(wifiOK));
+  appendDiagnosticNumber(out, "WiFi status", (long)lastWifiConnectStatus);
+  appendDiagnosticNumber(out, "WiFi attempts", (long)lastWifiConnectAttempts);
+  appendDiagnosticNumber(out, "WiFi elapsed ms", (long)lastWifiConnectElapsedMs);
+  appendDiagnosticNumber(out, "WiFi RSSI", (long)lastWifiConnectRssi);
+  appendDiagnosticLine(out, "WiFi AP kept", boolText(lastWifiConnectKeptPortalAp));
   appendDiagnosticLine(out, "NTP synced", boolText(ntpSynced));
   appendDiagnosticLine(out, "MQTT OK", boolText(mqttOK));
   appendDiagnosticLine(out, "Got BTC price", boolText(gotPriceValue));

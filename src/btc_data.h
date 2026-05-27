@@ -29,16 +29,41 @@ static void mqttCallback(char* topic, byte* payload, unsigned int length) {
 static bool connectWiFi(const DeviceConfig& cfg, uint16_t timeout_ms, bool keepPortalAp) {
   if (!hasText(cfg.wifiSsid)) return false;
 
-  WiFi.mode(keepPortalAp ? WIFI_AP_STA : WIFI_STA);
-  WiFi.disconnect(false, false);
-  delay(100);
-  WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
+  lastWifiConnectStatus = WL_IDLE_STATUS;
+  lastWifiConnectAttempts = 0;
+  lastWifiConnectElapsedMs = 0;
+  lastWifiConnectRssi = 0;
+  lastWifiConnectKeptPortalAp = keepPortalAp;
 
-  uint32_t start = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeout_ms) {
-    delay(WIFI_POLL_DELAY_MS);
+  WiFi.persistent(false);
+  WiFi.setSleep(false);
+
+  static constexpr uint8_t WIFI_CONNECT_ATTEMPTS = 2;
+  for (uint8_t attempt = 1; attempt <= WIFI_CONNECT_ATTEMPTS; attempt++) {
+    lastWifiConnectAttempts = attempt;
+    const uint32_t start = millis();
+
+    WiFi.mode(keepPortalAp ? WIFI_AP_STA : WIFI_STA);
+    WiFi.disconnect(false, false);
+    delay(attempt == 1 ? 150 : 350);
+    WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
+
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeout_ms) {
+      delay(WIFI_POLL_DELAY_MS);
+    }
+
+    lastWifiConnectElapsedMs += millis() - start;
+    lastWifiConnectStatus = (int)WiFi.status();
+    if (WiFi.status() == WL_CONNECTED) {
+      lastWifiConnectRssi = WiFi.RSSI();
+      return true;
+    }
+
+    WiFi.disconnect(false, false);
+    delay(250);
   }
-  return WiFi.status() == WL_CONNECTED;
+
+  return false;
 }
 
 static bool parseJsonNumberForKey(const String& payload, const char* keyName, float& outPrice) {

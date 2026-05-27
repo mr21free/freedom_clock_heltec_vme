@@ -83,7 +83,7 @@ RTC_DATA_ATTR time_t lastKnownUnixTime = 0;
 RTC_DATA_ATTR time_t lastBtcCacheUnixTime = 0;
 
 static constexpr uint16_t WEALTH_HISTORY_DAYS = 366;
-static constexpr uint8_t BATTERY_LOG_SAMPLES = 64;
+static constexpr uint16_t BATTERY_LOG_SAMPLES = 1440;
 static constexpr int32_t WEALTH_HISTORY_EMPTY = INT32_MIN;
 static constexpr int32_t PRICE_HISTORY_EMPTY = INT32_MIN;
 static constexpr int64_t BALANCE_HISTORY_EMPTY = INT64_MIN;
@@ -159,6 +159,8 @@ struct LifeStats {
   int weeksLeftRemainder;  // when pastExpectancy: extra weeks (remainder)
   int totalWeeks;
   int remainingWeeks;      // when pastExpectancy: total extra weeks beyond expectancy
+  float totalYearsExact;
+  float remainingYearsExact;  // when pastExpectancy: exact extra years beyond expectancy
   int remainingPercent;
   bool pastExpectancy;     // true when current date is past the expected death date
 };
@@ -174,7 +176,9 @@ struct DeviceConfig {
   int birthYear;
   int lifeExpectancyYears;
   float monthlyExpenseValue;
+  float monthlyIncomeValue;
   float inflationAnnual;
+  float incomeGrowthAnnual;
   float wealthGrowthAnnual;
   float defaultWealthValue;
   float manualBtcAmount;
@@ -216,11 +220,9 @@ struct WealthHistory {
 };
 
 struct BatteryLog {
-  uint32_t version;
   uint32_t nextSampleId;
-  uint8_t count;
-  uint8_t nextIndex;
-  uint32_t sampleId[BATTERY_LOG_SAMPLES];
+  uint16_t count;
+  uint16_t nextIndex;
   uint32_t unixTime[BATTERY_LOG_SAMPLES];
   uint16_t millivolts[BATTERY_LOG_SAMPLES];
   uint8_t percent[BATTERY_LOG_SAMPLES];
@@ -242,6 +244,11 @@ static AppScreenId portalExitScreen = APP_SCREEN_MAIN;
 static char lastConfigLoadStatus[CONFIG_LOAD_STATUS_SIZE] = "not loaded";
 static uint32_t lastConfigStoredVersion = 0;
 static bool lastConfigStoredOkFlag = false;
+static int lastWifiConnectStatus = WL_IDLE_STATUS;
+static uint8_t lastWifiConnectAttempts = 0;
+static uint32_t lastWifiConnectElapsedMs = 0;
+static int32_t lastWifiConnectRssi = 0;
+static bool lastWifiConnectKeptPortalAp = false;
 
 enum SetupBootAction {
   SETUP_BOOT_ACTION_NONE = 0,
@@ -634,7 +641,9 @@ void setup() {
   computeLongevityWithInflation(
     wealthValue,
     deviceConfig.monthlyExpenseValue,
+    deviceConfig.monthlyIncomeValue,
     deviceConfig.inflationAnnual,
+    deviceConfig.incomeGrowthAnnual,
     deviceConfig.wealthGrowthAnnual,
     portfolioUseMode,
     deviceConfig.borrowFeeAnnual,
@@ -659,15 +668,16 @@ void setup() {
 
   bool coveredInfinite = freedomHitCap;
   int coveredPercent = 100;
+  const float coveredYears = coveredWeeks / (12.0f * 4.345f);
   if (lifeStats.pastExpectancy) {
     // Past expectancy: compare fund against the originally planned total lifespan.
     // This answers "what % of my planned life can my wealth fund?" and can exceed 100%.
-    if (lifeStats.totalWeeks > 0) {
-      float coverageRatio = coveredWeeks / (float)lifeStats.totalWeeks;
+    if (lifeStats.totalYearsExact > 0.0f) {
+      float coverageRatio = coveredYears / lifeStats.totalYearsExact;
       coveredPercent = clampInt((int)(coverageRatio * 100.0f + 0.5f), 0, 999);
     }
-  } else if (lifeStats.remainingWeeks > 0) {
-    float coverageRatio = coveredWeeks / (float)lifeStats.remainingWeeks;
+  } else if (lifeStats.remainingYearsExact > 0.0f) {
+    float coverageRatio = coveredYears / lifeStats.remainingYearsExact;
     coveredPercent = clampInt((int)(coverageRatio * 100.0f + 0.5f), 0, 999);
   }
 

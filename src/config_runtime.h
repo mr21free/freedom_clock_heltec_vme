@@ -262,14 +262,18 @@ static void normalizeDeviceConfig(DeviceConfig& cfg) {
   cfg.currencyCode = sanitizeCurrencyCode(cfg.currencyCode);
 
   if (!(cfg.monthlyExpenseValue >= 0.0f)) cfg.monthlyExpenseValue = DEFAULT_MONTHLY_EXPENSE_VALUE;
+  if (!(cfg.monthlyIncomeValue >= 0.0f)) cfg.monthlyIncomeValue = DEFAULT_MONTHLY_INCOME_VALUE;
   if (!(cfg.inflationAnnual >= 0.0f)) cfg.inflationAnnual = DEFAULT_INFLATION_ANNUAL;
+  if (!(cfg.incomeGrowthAnnual >= 0.0f)) cfg.incomeGrowthAnnual = DEFAULT_INCOME_GROWTH_ANNUAL;
   if (!(cfg.wealthGrowthAnnual > -1.0f)) cfg.wealthGrowthAnnual = DEFAULT_WEALTH_GROWTH_ANNUAL;
   if (!(cfg.defaultWealthValue >= 0.0f)) cfg.defaultWealthValue = DEFAULT_WEALTH_VALUE;
   if (!(cfg.manualBtcAmount >= 0.0f)) cfg.manualBtcAmount = DEFAULT_MANUAL_BTC_AMOUNT;
   if (!(cfg.borrowFeeAnnual > -1.0f)) cfg.borrowFeeAnnual = DEFAULT_BORROW_FEE_ANNUAL;
 
   cfg.monthlyExpenseValue = clampNonNegative(cfg.monthlyExpenseValue);
+  cfg.monthlyIncomeValue = clampNonNegative(cfg.monthlyIncomeValue);
   cfg.inflationAnnual = clampNonNegative(cfg.inflationAnnual);
+  cfg.incomeGrowthAnnual = clampNonNegative(cfg.incomeGrowthAnnual);
   cfg.defaultWealthValue = clampNonNegative(cfg.defaultWealthValue);
   cfg.manualBtcAmount = clampNonNegative(cfg.manualBtcAmount);
   if (!hasText(cfg.manualBtcAmountText)) {
@@ -308,7 +312,9 @@ static void applyDefaultDeviceConfig(DeviceConfig& cfg) {
   cfg.birthYear = DEFAULT_OWNER_BIRTH_YEAR;
   cfg.lifeExpectancyYears = DEFAULT_OWNER_LIFE_EXPECTANCY_YEARS;
   cfg.monthlyExpenseValue = DEFAULT_MONTHLY_EXPENSE_VALUE;
+  cfg.monthlyIncomeValue = DEFAULT_MONTHLY_INCOME_VALUE;
   cfg.inflationAnnual = DEFAULT_INFLATION_ANNUAL;
+  cfg.incomeGrowthAnnual = DEFAULT_INCOME_GROWTH_ANNUAL;
   cfg.wealthGrowthAnnual = DEFAULT_WEALTH_GROWTH_ANNUAL;
   cfg.defaultWealthValue = DEFAULT_WEALTH_VALUE;
   cfg.manualBtcAmount = DEFAULT_MANUAL_BTC_AMOUNT;
@@ -411,7 +417,9 @@ static bool loadDeviceConfig(DeviceConfig& cfg) {
   cfg.birthYear = (int)preferences.getUInt("birth", (uint32_t)cfg.birthYear);
   cfg.lifeExpectancyYears = (int)preferences.getUInt("lifeexp", (uint32_t)cfg.lifeExpectancyYears);
   cfg.monthlyExpenseValue = preferences.getFloat("monthval", cfg.monthlyExpenseValue);
+  cfg.monthlyIncomeValue = preferences.getFloat("incomeval", cfg.monthlyIncomeValue);
   cfg.inflationAnnual = preferences.getFloat("infl", cfg.inflationAnnual);
+  cfg.incomeGrowthAnnual = preferences.getFloat("incgrow", cfg.incomeGrowthAnnual);
   cfg.wealthGrowthAnnual = preferences.getFloat("growth", cfg.wealthGrowthAnnual);
   cfg.defaultWealthValue = preferences.getFloat("wealth", cfg.defaultWealthValue);
   cfg.manualBtcAmount = preferences.getFloat("manbtc", cfg.manualBtcAmount);
@@ -470,7 +478,9 @@ static bool saveDeviceConfig(const DeviceConfig& cfg) {
   preferences.putUInt("birth", (uint32_t)cfg.birthYear);
   preferences.putUInt("lifeexp", (uint32_t)cfg.lifeExpectancyYears);
   preferences.putFloat("monthval", cfg.monthlyExpenseValue);
+  preferences.putFloat("incomeval", cfg.monthlyIncomeValue);
   preferences.putFloat("infl", cfg.inflationAnnual);
+  preferences.putFloat("incgrow", cfg.incomeGrowthAnnual);
   preferences.putFloat("growth", cfg.wealthGrowthAnnual);
   preferences.putFloat("wealth", cfg.defaultWealthValue);
   preferences.putFloat("manbtc", cfg.manualBtcAmount);

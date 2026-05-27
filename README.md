@@ -39,9 +39,9 @@ Both boards use the same source code and release line. The firmware selects the 
 - Automatic BTC via MQTT: BTC amount and BTC price come from local MQTT topics. The MQTT price value should use the selected currency.
 - Static net worth: enter total wealth directly in the selected currency.
 
-Supported portfolio currencies are `USD`, `EUR`, and `CHF`. `USD` is the default. Monthly expenses, static wealth, BTC price, cached BTC price, and history values all follow the selected currency.
+Supported portfolio currencies are `USD`, `EUR`, and `CHF`. `USD` is the default. Monthly expenses, optional monthly income, static wealth, BTC price, cached BTC price, and history values all follow the selected currency.
 
-Spend mode can be either monthly selling or yearly borrowing. The display can use light mode or dark mode.
+Spend mode can be either monthly selling or yearly borrowing. Monthly income and income growth default to `0`, so they do not affect the model unless configured. When income is set, the freedom-time model uses the net shortfall between expenses and income, with expenses growing by inflation and income growing by the configured income growth rate. The display can use light mode or dark mode.
 
 MQTT mode is best for bitcoiners who already run local infrastructure, for example a Bitcoin node, home server, or dashboard that watches read-only wallets and publishes values on the local network. In that setup, Freedom Clock only needs the MQTT broker address and topic names for BTC price and BTC amount. It does not need wallet keys, xpubs, exchange logins, or cloud accounts.
 

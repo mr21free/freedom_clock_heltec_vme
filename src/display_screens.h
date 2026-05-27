@@ -251,6 +251,16 @@ static void drawSetupPortalReadyScreen() {
 
   static constexpr int LABEL_X = 9;
   static constexpr int VALUE_X = 51;
+#if DEVICE_PROFILE_E213
+  display.setCursor(LABEL_X, 80);
+  display.print("Wi-Fi:");
+  display.setCursor(LABEL_X, 94);
+  display.print(portalApSsid);
+  display.setCursor(LABEL_X, 108);
+  display.print("PW:");
+  display.setCursor(VALUE_X, 108);
+  display.print(portalApPassword);
+#else
   display.setCursor(LABEL_X, 80);
   display.print("Wi-Fi:");
   display.setCursor(VALUE_X, 80);
@@ -259,6 +269,7 @@ static void drawSetupPortalReadyScreen() {
   display.print("PW:");
   display.setCursor(VALUE_X, 94);
   display.print(portalApPassword);
+#endif
 
   char qrData[96];
   snprintf(qrData, sizeof(qrData), "WIFI:T:WPA;S:%s;P:%s;;", portalApSsid, portalApPassword);
@@ -580,15 +591,14 @@ static void drawQuoteScreen(
   char quoteText[384];
   normalizeDisplayText(q.text, quoteText, sizeof(quoteText));
 
-  // Battery bottom edge is BATTERY_ICON_Y(4) + BATTERY_BODY_H(10) = 14;
-  // 7px gap below that gives TOP_Y = 21.
   static constexpr int LEFT_X     = 9;
   static constexpr int MARGIN_X   = 9;
-  static constexpr int TOP_Y      = 21;
+  static constexpr int TOP_Y_S1   = 21;
+  static constexpr int TOP_Y_S2   = 14;
 
 #if DEVICE_PROFILE_E290
   static constexpr int CHARS_S1 = 46;
-  static constexpr int CHARS_S2 = 23;
+  static constexpr int CHARS_S2 = 24;
 #else
   static constexpr int CHARS_S1 = 39;
   static constexpr int CHARS_S2 = 19;
@@ -598,33 +608,38 @@ static void drawQuoteScreen(
   const int FREEDOM_Y = DEVICE_DISPLAY_HEIGHT - 8 - 9;
   const int SEP_Y     = FREEDOM_Y - 7;
   const int DRAW_SEP_Y = SEP_Y + 2;
+  const int FOOTER_TEXT_H = 8;
+  const int FOOTER_LINE_GAP = FREEDOM_Y - DRAW_SEP_Y;
+  const int AUTHOR_Y = DRAW_SEP_Y - FOOTER_LINE_GAP - FOOTER_TEXT_H;
 
-  // Vertical space available for quote + author
-  const int availH        = SEP_Y - TOP_Y - 3;
-  const int authorReserve = 10;
-  const int quoteAvailH   = availH - authorReserve;
-
-  // Choose the largest font size where the quote still fits
+  // Choose the largest font size where the quote and author still fit. Size 2
+  // uses a 14px active glyph height plus at least 1px of air between wrapped
+  // lines; without that, adjacent pixel rows can visually merge on e-ink.
   const int linesAtS2 = countWrappedLines(quoteText, CHARS_S2);
-  const bool useSize2  = (linesAtS2 * 17) <= quoteAvailH;
-
+  const int glyphHAtS2 = 14;
+  const int lineHAtS2 = glyphHAtS2 + 1;
+  const int quoteAuthorGap = 5;
+  const bool useSize2 =
+    linesAtS2 > 0
+    && (TOP_Y_S2 + ((linesAtS2 - 1) * lineHAtS2) + glyphHAtS2 + quoteAuthorGap) <= AUTHOR_Y;
   const int textSize     = useSize2 ? 2 : 1;
-  const int lineH        = useSize2 ? 17 : 9;
+  const int topY         = useSize2 ? TOP_Y_S2 : TOP_Y_S1;
+  const int lineH        = useSize2 ? lineHAtS2 : 9;
   const int charsPerLine = useSize2 ? CHARS_S2 : CHARS_S1;
+  const int quoteAvailH  = SEP_Y - topY - 10;
   const int maxQuoteLines = (quoteAvailH / lineH > 0) ? quoteAvailH / lineH : 1;
 
   // Quote — left-aligned, below battery
   display.setTextSize(textSize);
   const int linesUsed = drawWrappedText(
-    quoteText, LEFT_X, TOP_Y, charsPerLine, lineH, maxQuoteLines);
+    quoteText, LEFT_X, topY, charsPerLine, lineH, maxQuoteLines);
 
-  // Author — right-aligned, a few pixels below the last quote line
+  // Author — always pinned to bottom-right, just above the separator line
   if (q.author && q.author[0]) {
     display.setTextSize(1);
     const int authorW = (int)strlen(q.author) * 6;
     const int authorX = DEVICE_DISPLAY_WIDTH - authorW - MARGIN_X;
-    const int authorY = TOP_Y + linesUsed * lineH + 6;
-    display.setCursor((authorX < LEFT_X) ? LEFT_X : authorX, authorY);
+    display.setCursor((authorX < LEFT_X) ? LEFT_X : authorX, AUTHOR_Y);
     display.print(q.author);
   }
 
@@ -973,8 +988,8 @@ static void drawInfoScreen(
   static constexpr int TITLE_Y = 13;
   static constexpr int LABEL_X = 11;
   static constexpr int VALUE_X = 142;
-  static constexpr int ROW_Y0 = 30;
-  static constexpr int ROW_STEP = 10;
+  static constexpr int ROW_Y0 = 29;
+  static constexpr int ROW_STEP = 9;
 
   prepareScreen(themeMode);
 
@@ -1036,20 +1051,24 @@ static void drawInfoScreen(
   snprintf(value, sizeof(value), "%s %s", compactValue, currencyLabel);
   drawSettingsRow(4, "MONTHLY EXPENSES:", value);
 
+  formatCompactValue(cfg.monthlyIncomeValue, compactValue, sizeof(compactValue));
+  snprintf(value, sizeof(value), "%s %s", compactValue, currencyLabel);
+  drawSettingsRow(5, "MONTHLY INCOME:", value);
+
   snprintf(value, sizeof(value), "~%d Y", currentAgeFromBirthYear(cfg.birthYear, now));
-  drawSettingsRow(5, "AGE NOW:", value);
+  drawSettingsRow(6, "AGE NOW:", value);
 
   snprintf(value, sizeof(value), "%d Y", cfg.lifeExpectancyYears);
-  drawSettingsRow(6, "LIFE EXPECTANCY:", value);
+  drawSettingsRow(7, "LIFE EXPECTANCY:", value);
 
   if (portfolioUseMode == PORTFOLIO_USE_MODE_BORROW) {
     snprintf(value, sizeof(value), "BORROW YEARLY (%.1f%%/Y)", cfg.borrowFeeAnnual * 100.0f);
   } else {
     snprintf(value, sizeof(value), "%s", portfolioUseModeLabel(portfolioUseMode));
   }
-  drawSettingsRow(7, "SPEND MODE:", value);
+  drawSettingsRow(8, "SPEND MODE:", value);
 
-  drawSettingsRow(8, "FIRMWARE:", FIRMWARE_VERSION);
+  drawSettingsRow(9, "FIRMWARE:", FIRMWARE_VERSION);
 
   display.update();
 }
@@ -1205,16 +1224,17 @@ static void computeLifeStats(
   time_t now,
   LifeStats& outStats
 ) {
-  outStats = {0, 0, 0, 0, 0, 0, false};
+  outStats = {0, 0, 0, 0, 0, 0.0f, 0.0f, 0, false};
 
   if (lifeExpectancyYears <= 0) return;
 
   const time_t birthTime = makeUtcDate(birthYear, 1, 1);
   const time_t endTime = makeUtcDate(birthYear + lifeExpectancyYears, 1, 1);
-  if (birthTime <= 0 || endTime <= birthTime) return;
+  if (birthTime == (time_t)-1 || endTime == (time_t)-1 || endTime <= birthTime) return;
 
   const double totalDays = difftime(endTime, birthTime) / 86400.0;
   outStats.totalWeeks = (int)(totalDays / 7.0 + 0.5);
+  outStats.totalYearsExact = (float)(totalDays / 365.25);
 
   if (now > endTime) {
     // Past life expectancy: compute bonus time lived beyond expected end date.
@@ -1222,6 +1242,7 @@ static void computeLifeStats(
     outStats.remainingPercent = 0;
     const double extraDays = difftime(now, endTime) / 86400.0;
     outStats.remainingWeeks = (int)((extraDays + 6.999) / 7.0);
+    outStats.remainingYearsExact = (float)(extraDays / 365.25);
     int d = (int)(extraDays + 0.5);
     outStats.yearsLeft = d / 365;  d %= 365;
     outStats.monthsLeft = d / 30;  d %= 30;
@@ -1231,6 +1252,7 @@ static void computeLifeStats(
     const time_t clampedNow = (now < birthTime) ? birthTime : now;
     const double remainingDays = difftime(endTime, clampedNow) / 86400.0;
     outStats.remainingWeeks = (remainingDays <= 0.0) ? 0 : (int)((remainingDays + 6.999) / 7.0);
+    outStats.remainingYearsExact = (remainingDays <= 0.0) ? 0.0f : (float)(remainingDays / 365.25);
     const double remainingRatio = (totalDays > 0.0) ? (remainingDays / totalDays) : 0.0;
     outStats.remainingPercent = clampInt((int)(remainingRatio * 100.0 + 0.5), 0, 100);
     int d = (remainingDays <= 0.0) ? 0 : (int)(remainingDays + 0.5);
@@ -1243,7 +1265,9 @@ static void computeLifeStats(
 static void computeLongevityWithInflation(
   float wealthValue,
   float monthlyExpenseToday,
+  float monthlyIncomeToday,
   float inflationAnnual,
+  float incomeGrowthAnnual,
   float assetGrowthAnnual,
   PortfolioUseMode portfolioUseMode,
   float borrowFeeAnnual,
@@ -1260,7 +1284,9 @@ static void computeLongevityWithInflation(
   outCoveredWeeks = 0.0f;
 
   if (wealthValue <= 0.0f || monthlyExpenseToday <= 0.0f) return;
+  if (monthlyIncomeToday < 0.0f) monthlyIncomeToday = 0.0f;
   if (inflationAnnual < 0.0f) inflationAnnual = 0.0f;
+  if (incomeGrowthAnnual < 0.0f) incomeGrowthAnnual = 0.0f;
   if (assetGrowthAnnual < -0.99f) assetGrowthAnnual = -0.99f;
   if (borrowFeeAnnual < -0.99f) borrowFeeAnnual = -0.99f;
 
@@ -1269,10 +1295,12 @@ static void computeLongevityWithInflation(
 
   if (portfolioUseMode == PORTFOLIO_USE_MODE_BORROW) {
     const float annualExpenseMul = 1.0f + inflationAnnual;
+    const float annualIncomeMul = 1.0f + incomeGrowthAnnual;
     const float annualAssetMul = 1.0f + assetGrowthAnnual;
     const float annualDebtMul = 1.0f + borrowFeeAnnual;
 
     float annualExpense = monthlyExpenseToday * 12.0f;
+    float annualIncome = monthlyIncomeToday * 12.0f;
     float collateralValue = wealthValue;
     float debt = 0.0f;
     int years = 0;
@@ -1280,17 +1308,21 @@ static void computeLongevityWithInflation(
     while (years < MAX_YEARS) {
       collateralValue *= annualAssetMul;
       debt *= annualDebtMul;
-      if ((debt + annualExpense) > collateralValue) break;
-      debt += annualExpense;
+      const float annualShortfall = annualExpense - annualIncome;
+      const float annualBorrow = annualShortfall > 0.0f ? annualShortfall : 0.0f;
+      if ((debt + annualBorrow) > collateralValue) break;
+      debt += annualBorrow;
       annualExpense *= annualExpenseMul;
+      annualIncome *= annualIncomeMul;
       years++;
     }
 
     outHitCap = (years >= MAX_YEARS);
 
     float partialYear = 0.0f;
-    if (!outHitCap && annualExpense > 0.0f && collateralValue > debt) {
-      partialYear = (collateralValue - debt) / annualExpense;
+    const float finalAnnualShortfall = annualExpense - annualIncome;
+    if (!outHitCap && finalAnnualShortfall > 0.0f && collateralValue > debt) {
+      partialYear = (collateralValue - debt) / finalAnnualShortfall;
       if (partialYear > 0.999f) partialYear = 0.999f;
       if (partialYear < 0.0f) partialYear = 0.0f;
     }
@@ -1307,17 +1339,22 @@ static void computeLongevityWithInflation(
   }
 
   const float monthlyExpenseMul = powf(1.0f + inflationAnnual, 1.0f / 12.0f);
+  const float monthlyIncomeMul = powf(1.0f + incomeGrowthAnnual, 1.0f / 12.0f);
   const float monthlyAssetMul = powf(1.0f + assetGrowthAnnual, 1.0f / 12.0f);
 
   float monthlyExpense = monthlyExpenseToday;
+  float monthlyIncome = monthlyIncomeToday;
   float remaining = wealthValue;
   int months = 0;
 
   while (months < MAX_MONTHS) {
     remaining *= monthlyAssetMul;
-    if (remaining < monthlyExpense) break;
-    remaining -= monthlyExpense;
+    const float monthlyShortfall = monthlyExpense - monthlyIncome;
+    const float monthlyWithdrawal = monthlyShortfall > 0.0f ? monthlyShortfall : 0.0f;
+    if (remaining < monthlyWithdrawal) break;
+    remaining -= monthlyWithdrawal;
     monthlyExpense *= monthlyExpenseMul;
+    monthlyIncome *= monthlyIncomeMul;
     months++;
   }
 
@@ -1326,8 +1363,9 @@ static void computeLongevityWithInflation(
   outMonths = months % 12;
 
   float partialMonth = 0.0f;
-  if (monthlyExpense > 0.0f && remaining > 0.0f) {
-    partialMonth = remaining / monthlyExpense;
+  const float finalMonthlyShortfall = monthlyExpense - monthlyIncome;
+  if (finalMonthlyShortfall > 0.0f && remaining > 0.0f) {
+    partialMonth = remaining / finalMonthlyShortfall;
     if (partialMonth > 0.999f) partialMonth = 0.999f;
     if (partialMonth < 0.0f) partialMonth = 0.0f;
   }
@@ -1401,7 +1439,9 @@ static void drawFreedomCheckinScreen(
     computeLongevityWithInflation(
       wealthValue,
       cfg.monthlyExpenseValue,
+      cfg.monthlyIncomeValue,
       cfg.inflationAnnual,
+      cfg.incomeGrowthAnnual,
       cfg.wealthGrowthAnnual,
       sanitizePortfolioUseMode(cfg.portfolioUseMode),
       cfg.borrowFeeAnnual,
@@ -1463,7 +1503,9 @@ static void drawFreedomCheckinScreen(
     computeLongevityWithInflation(
       (float)historicalWealthValue,
       cfg.monthlyExpenseValue,
+      cfg.monthlyIncomeValue,
       cfg.inflationAnnual,
+      cfg.incomeGrowthAnnual,
       cfg.wealthGrowthAnnual,
       sanitizePortfolioUseMode(cfg.portfolioUseMode),
       cfg.borrowFeeAnnual,

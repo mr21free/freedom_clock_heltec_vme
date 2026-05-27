@@ -41,7 +41,9 @@ static constexpr int DEVICE_DISPLAY_HEIGHT = 122;
 // ============================================================
 
 static constexpr float DEFAULT_MONTHLY_EXPENSE_VALUE = 10000.0f;
+static constexpr float DEFAULT_MONTHLY_INCOME_VALUE = 0.0f;
 static constexpr float DEFAULT_INFLATION_ANNUAL = 0.02f;
+static constexpr float DEFAULT_INCOME_GROWTH_ANNUAL = 0.0f;
 static constexpr float DEFAULT_WEALTH_GROWTH_ANNUAL = 0.10f;
 static constexpr float DEFAULT_WEALTH_VALUE = 1000000.0f;
 static constexpr float DEFAULT_BORROW_FEE_ANNUAL = 0.08f;
@@ -93,7 +95,7 @@ static constexpr char DEFAULT_TOPIC_PRICE_VALUE[] = "home/bitcoin/price/usd";
 static constexpr char DEFAULT_TOPIC_BALANCE_BTC[] = "home/bitcoin/wallets/total_btc";
 
 static constexpr uint16_t DEFAULT_REFRESH_INTERVAL_MINUTES = 1440;
-static constexpr uint16_t MIN_REFRESH_INTERVAL_MINUTES = 15;
+static constexpr uint16_t MIN_REFRESH_INTERVAL_MINUTES = 1;
 static constexpr uint16_t MAX_REFRESH_INTERVAL_MINUTES = 10080;
 static constexpr uint64_t MICROSECONDS_PER_MINUTE = 60ULL * 1000000ULL;
 
@@ -164,8 +166,7 @@ static constexpr char BTC_CACHE_NAMESPACE[] = "btccache";
 static constexpr char BATTERY_LOG_NAMESPACE[] = "batlog";
 static constexpr uint32_t CONFIG_VERSION = 2;
 static constexpr uint32_t HISTORY_VERSION = 2;
-static constexpr uint32_t BATTERY_LOG_VERSION = 1;
-static constexpr char FIRMWARE_VERSION[] = "2026.05.23.2";
+static constexpr char FIRMWARE_VERSION[] = "2026.05.26.1";
 static constexpr char GITHUB_REPO_SLUG[] = "mr21free/freedom_clock_heltec_vme";
 static constexpr char GITHUB_RELEASES_URL[] = "https://github.com/mr21free/freedom_clock_heltec_vme/releases";
 static constexpr char GITHUB_LATEST_RELEASE_API_URL[] = "https://api.github.com/repos/mr21free/freedom_clock_heltec_vme/releases/latest";

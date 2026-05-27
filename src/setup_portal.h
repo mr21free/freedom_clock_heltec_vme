@@ -94,6 +94,12 @@ static float parseFloatSafe(const char* s) {
   return clampNonNegative(v);
 }
 
+static float parsePortalFloatArg(const char* name) {
+  String value = portalServer.arg(name);
+  value.replace(',', '.');
+  return value.toFloat();
+}
+
 static bool parseNonNegativeFloatStrict(const char* s, float& outValue, bool allowZero = true) {
   if (!s) return false;
 
@@ -423,7 +429,7 @@ static bool validateDeviceConfig(const DeviceConfig& cfg, char* errorBuf, size_t
     return false;
   }
   if (cfg.refreshIntervalMinutes < MIN_REFRESH_INTERVAL_MINUTES || cfg.refreshIntervalMinutes > MAX_REFRESH_INTERVAL_MINUTES) {
-    snprintf(errorBuf, errorBufSize, "Refresh interval must be between 15 minutes and 7 days.");
+    snprintf(errorBuf, errorBufSize, "Refresh interval must be between 1 minute and 7 days.");
     return false;
   }
 
@@ -457,6 +463,33 @@ static bool validateDeviceConfig(const DeviceConfig& cfg, char* errorBuf, size_t
   }
 
   errorBuf[0] = '\0';
+  return true;
+}
+
+static bool validatePortalRefreshIntervalForm(char* errorBuf, size_t errorBufSize) {
+  uint16_t refreshValue = 0;
+  RefreshIntervalUnit refreshUnit = REFRESH_INTERVAL_UNIT_MINUTES;
+
+  if (portalServer.hasArg("refresh_interval_value")) {
+    String rawValue = portalServer.arg("refresh_interval_value");
+    rawValue.trim();
+    if (rawValue.length() == 0) {
+      snprintf(errorBuf, errorBufSize, "Refresh interval is required.");
+      return false;
+    }
+    refreshValue = (uint16_t)rawValue.toInt();
+    refreshUnit = parseRefreshIntervalUnit(portalServer.arg("refresh_interval_unit"));
+  } else {
+    refreshValue = (uint16_t)portalServer.arg("refresh_interval_minutes").toInt();
+    refreshUnit = REFRESH_INTERVAL_UNIT_MINUTES;
+  }
+
+  const uint32_t totalMinutes = (uint32_t)refreshValue * (uint32_t)refreshIntervalUnitMultiplier(refreshUnit);
+  if (refreshValue == 0 || totalMinutes < MIN_REFRESH_INTERVAL_MINUTES || totalMinutes > MAX_REFRESH_INTERVAL_MINUTES) {
+    snprintf(errorBuf, errorBufSize, "Refresh interval must be between 1 minute and 7 days.");
+    return false;
+  }
+
   return true;
 }
 
@@ -610,6 +643,15 @@ static String selectedAttr(bool selected) {
 
 static String formatFloatForInput(float value, uint8_t decimals = 2) {
   return String((double)value, (unsigned int)decimals);
+}
+
+static String formatFloatForInputTrimZeros(float value, uint8_t maxDecimals = 2) {
+  String s = String((double)value, (unsigned int)maxDecimals);
+  if (s.indexOf('.') >= 0) {
+    while (s.endsWith("0")) s.remove(s.length() - 1);
+    if (s.endsWith(".")) s.remove(s.length() - 1);
+  }
+  return s;
 }
 
 static void appendPortalBrandHeader(String& html, const char* title) {
@@ -868,19 +910,21 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String("<option value=\"0\"") + selectedAttr(selectedCurrency == CURRENCY_USD) + ">USD</option>";
   html += String("<option value=\"1\"") + selectedAttr(selectedCurrency == CURRENCY_EUR) + ">EUR</option>";
   html += String("<option value=\"2\"") + selectedAttr(selectedCurrency == CURRENCY_CHF) + ">CHF</option>";
-  html += "</select><div class=\"hint\">Use this currency for expenses, static wealth, BTC price, and MQTT price values.</div></div>";
-  html += String("<div id=\"manual_btc_field_wrap\"><label for=\"manual_btc_amount\">BTC amount</label><input id=\"manual_btc_amount\" name=\"manual_btc_amount\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" min=\"0.00000001\" step=\"0.00000001\" autocomplete=\"off\" value=\"") + htmlEscape(cfg.manualBtcAmountText) + "\"><div id=\"manual_btc_currency_hint\" class=\"hint\">BTC/";
+  html += "</select><div class=\"hint\">Use this currency for expenses, monthly income, static wealth, BTC price, and MQTT price values.</div></div>";
+  html += String("<div id=\"manual_btc_field_wrap\"><label for=\"manual_btc_amount\">BTC amount</label><input id=\"manual_btc_amount\" name=\"manual_btc_amount\" type=\"text\" lang=\"en-US\" inputmode=\"decimal\" pattern=\"[0-9]*[.,]?[0-9]*\" data-number=\"decimal\" min=\"0.00000001\" step=\"0.00000001\" autocomplete=\"off\" value=\"") + htmlEscape(cfg.manualBtcAmountText) + "\"><div id=\"manual_btc_currency_hint\" class=\"hint\">BTC/";
   html += currencyLabel;
   html += " price is fetched from CoinGecko over the internet, with mempool.space as backup.</div></div>";
   html += "<div><label for=\"portfolio_use_mode\">Spend mode</label><select id=\"portfolio_use_mode\" name=\"portfolio_use_mode\">";
   html += String("<option value=\"0\"") + selectedAttr(sanitizePortfolioUseMode(cfg.portfolioUseMode) == PORTFOLIO_USE_MODE_SELL) + ">Sell monthly</option>";
   html += String("<option value=\"1\"") + selectedAttr(sanitizePortfolioUseMode(cfg.portfolioUseMode) == PORTFOLIO_USE_MODE_BORROW) + ">Borrow yearly</option>";
   html += "</select></div>";
-  html += String("<div id=\"wealth_field_wrap\"><label id=\"wealth_currency_label\" for=\"default_wealth_value\">Static wealth (") + currencyLabel + ")</label><input id=\"default_wealth_value\" name=\"default_wealth_value\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" min=\"0\" step=\"0.01\" value=\"" + formatFloatForInput(cfg.defaultWealthValue, 2) + "\"><div class=\"hint\">Used only in static net worth mode.</div></div>";
+  html += String("<div id=\"wealth_field_wrap\"><label id=\"wealth_currency_label\" for=\"default_wealth_value\">Static wealth (") + currencyLabel + ")</label><input id=\"default_wealth_value\" name=\"default_wealth_value\" type=\"text\" lang=\"en-US\" inputmode=\"decimal\" pattern=\"[0-9]*[.,]?[0-9]*\" data-number=\"decimal\" min=\"0\" step=\"0.01\" value=\"" + formatFloatForInputTrimZeros(cfg.defaultWealthValue, 2) + "\"><div class=\"hint\">Used only in static net worth mode.</div></div>";
   html += String("<div><label id=\"monthly_currency_label\" for=\"monthly_exp_value\">Monthly expenses (") + currencyLabel + ")</label><input id=\"monthly_exp_value\" name=\"monthly_exp_value\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"0\" step=\"1\" autocomplete=\"off\" value=\"" + String((int)(cfg.monthlyExpenseValue + 0.5f)) + "\"></div>";
-  html += String("<div><label for=\"inflation_annual_pct\">Inflation % / year</label><input id=\"inflation_annual_pct\" name=\"inflation_annual_pct\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.inflationAnnual * 100.0f, 2) + "\"></div>";
-  html += String("<div><label for=\"wealth_growth_annual_pct\">Portfolio growth % / year</label><input id=\"wealth_growth_annual_pct\" name=\"wealth_growth_annual_pct\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.wealthGrowthAnnual * 100.0f, 2) + "\"></div>";
-  html += String("<div id=\"borrow_fee_wrap\"><label for=\"borrow_fee_annual_pct\">Borrow fee % / year</label><input id=\"borrow_fee_annual_pct\" name=\"borrow_fee_annual_pct\" type=\"text\" inputmode=\"decimal\" pattern=\"[0-9]*[.]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.borrowFeeAnnual * 100.0f, 2) + "\"></div>";
+  html += String("<div><label id=\"income_currency_label\" for=\"monthly_income_value\">Monthly income (") + currencyLabel + ")</label><input id=\"monthly_income_value\" name=\"monthly_income_value\" type=\"text\" inputmode=\"numeric\" pattern=\"[0-9]*\" data-number=\"int\" min=\"0\" step=\"1\" autocomplete=\"off\" value=\"" + String((int)(cfg.monthlyIncomeValue + 0.5f)) + "\"><div class=\"hint\">Optional. Use 0 when there is no recurring monthly income.</div></div>";
+  html += String("<div><label for=\"inflation_annual_pct\">Inflation % / year</label><input id=\"inflation_annual_pct\" name=\"inflation_annual_pct\" type=\"text\" lang=\"en-US\" inputmode=\"decimal\" pattern=\"[0-9]*[.,]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.inflationAnnual * 100.0f, 2) + "\"></div>";
+  html += String("<div id=\"income_growth_wrap\"") + (cfg.monthlyIncomeValue <= 0.0f ? " class=\"hidden\"" : "") + String("><label for=\"income_growth_annual_pct\">Income growth % / year</label><input id=\"income_growth_annual_pct\" name=\"income_growth_annual_pct\" type=\"text\" lang=\"en-US\" inputmode=\"decimal\" pattern=\"[0-9]*[.,]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.incomeGrowthAnnual * 100.0f, 2) + "\"><div class=\"hint\">Optional. Use 0 for fixed income.</div></div>";
+  html += String("<div><label for=\"wealth_growth_annual_pct\">Portfolio growth % / year</label><input id=\"wealth_growth_annual_pct\" name=\"wealth_growth_annual_pct\" type=\"text\" lang=\"en-US\" inputmode=\"decimal\" pattern=\"[0-9]*[.,]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.wealthGrowthAnnual * 100.0f, 2) + "\"></div>";
+  html += String("<div id=\"borrow_fee_wrap\"><label for=\"borrow_fee_annual_pct\">Borrow fee % / year</label><input id=\"borrow_fee_annual_pct\" name=\"borrow_fee_annual_pct\" type=\"text\" lang=\"en-US\" inputmode=\"decimal\" pattern=\"[0-9]*[.,]?[0-9]*\" data-number=\"decimal\" step=\"0.01\" value=\"") + formatFloatForInput(cfg.borrowFeeAnnual * 100.0f, 2) + "\"></div>";
   html += "</div></section>";
 
   html += "<section id=\"mqtt_card\" class=\"card\"><h2>MQTT For BTC Mode</h2><div class=\"grid\">";
@@ -1056,7 +1100,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function formParams(){var form=byId('config_form');return form?new URLSearchParams(new FormData(form)):new URLSearchParams();}";
   html += "function postJson(url,params){return fetch(url,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'}).then(function(r){return r.json();});}";
   html += "function fallbackCurrencyLabel(){var select=byId('currency_code');if(!select)return 'USD';var opt=select.options[select.selectedIndex];return opt?String(opt.textContent||'USD').trim():'USD';}";
-  html += "function fallbackSyncCurrencyLabels(){var cur=fallbackCurrencyLabel();var manual=byId('manual_btc_currency_hint');var wealth=byId('wealth_currency_label');var monthly=byId('monthly_currency_label');var topic=byId('topic_price_currency_label');var wealthPrivacy=byId('wealth_privacy_currency_label');var settingsPrivacy=byId('settings_privacy_currency_label');var topicInput=byId('topic_price_value');if(manual)manual.textContent='BTC/'+cur+' price is fetched from CoinGecko over the internet, with mempool.space as backup.';if(wealth)wealth.textContent='Static wealth ('+cur+')';if(monthly)monthly.textContent='Monthly expenses ('+cur+')';if(topic)topic.textContent='BTC price topic ('+cur+')';if(wealthPrivacy)wealthPrivacy.textContent=cur;if(settingsPrivacy)settingsPrivacy.textContent=cur;if(topicInput){var value=String(topicInput.value||'').trim().toLowerCase();if(/^home\\/bitcoin\\/price\\/(usd|eur|chf)$/.test(value))topicInput.value='home/bitcoin/price/'+cur.toLowerCase();}}";
+  html += "function fallbackSyncCurrencyLabels(){var cur=fallbackCurrencyLabel();var manual=byId('manual_btc_currency_hint');var wealth=byId('wealth_currency_label');var monthly=byId('monthly_currency_label');var income=byId('income_currency_label');var topic=byId('topic_price_currency_label');var wealthPrivacy=byId('wealth_privacy_currency_label');var settingsPrivacy=byId('settings_privacy_currency_label');var topicInput=byId('topic_price_value');if(manual)manual.textContent='BTC/'+cur+' price is fetched from CoinGecko over the internet, with mempool.space as backup.';if(wealth)wealth.textContent='Static wealth ('+cur+')';if(monthly)monthly.textContent='Monthly expenses ('+cur+')';if(income)income.textContent='Monthly income ('+cur+')';if(topic)topic.textContent='BTC price topic ('+cur+')';if(wealthPrivacy)wealthPrivacy.textContent=cur;if(settingsPrivacy)settingsPrivacy.textContent=cur;if(topicInput){var value=String(topicInput.value||'').trim().toLowerCase();if(/^home\\/bitcoin\\/price\\/(usd|eur|chf)$/.test(value))topicInput.value='home/bitcoin/price/'+cur.toLowerCase();}}";
   html += "function fallbackSave(e){if(window.fcSetupReady)return;var form=e&&e.target;if(!form||form.id!=='config_form')return;e.preventDefault();overlay('Checking settings...');var params=formParams();postJson('/validate',params).then(function(data){if(data&&data.unlock_required){hideOverlay();status('validation_status',data.message||'Setup session expired. Enter your PIN again.','err');setTimeout(function(){window.location.replace('/');},1200);return;}if(!data||!data.ok){hideOverlay();status('validation_status',(data&&data.message)||'Settings check failed.','err');return;}overlay('Saving settings...');params.set('_fc_fetch','1');return postJson('/save',params).then(function(saved){if(!saved||!saved.ok){hideOverlay();status('validation_status',(saved&&saved.error)||'Failed to save settings.','err');return;}overlayHtml('Settings saved!<br>Device is restarting...');});}).catch(function(err){hideOverlay();diag('fallback-save-failed','Fallback save failed',err&&err.stack?err.stack:String(err||''));status('validation_status','Setup page action failed. See diagnostics at the top of the page.','err');});}";
   html += "function renderRelease(data){var latest=byId('release_latest_version');var notes=byId('release_notes');var url=byId('latest_release_url_text');var summary=byId('release_summary');var urlRow=byId('latest_release_url_row');window.fcFallbackOnlineFirmwareAvailable=!!(data&&data.asset_available&&data.newer);if(!data||!data.ok){if(summary&&summary.classList)summary.classList.add('hidden');if(urlRow&&urlRow.classList)urlRow.classList.add('hidden');status('release_status',(data&&data.message)||'Could not check for updates.','err');var failedInstall=byId('firmware_install_button');if(failedInstall)failedInstall.disabled=true;return;}if(latest)latest.textContent=(data&&data.tag)||'Unknown';if(notes)notes.textContent=((data&&data.body)||'No release notes provided.').trim()||'No release notes provided.';if(url)url.textContent=(data&&data.html_url)||'";
   html += GITHUB_RELEASES_URL;
@@ -1072,11 +1116,11 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "function fallbackWifiScan(e){if(window.fcSetupReady)return;e.preventDefault();var select=byId('wifi_ssid_select');if(select){select.disabled=true;select.innerHTML='<option value=\"\">Scanning nearby networks...</option>';}fetch('/wifi-list',{cache:'no-store'}).then(function(r){return r.json();}).then(function(data){if(!select)return;var current=(byId('wifi_ssid')&&byId('wifi_ssid').value)||'';var networks=data&&Array.isArray(data.networks)?data.networks:[];select.innerHTML='<option value=\"\">'+(networks.length?'Choose a nearby network':'No networks found')+'</option>';networks.forEach(function(n){var opt=document.createElement('option');opt.value=n.ssid||'';opt.textContent=n.ssid||'';if(current&&n.ssid===current)opt.selected=true;select.appendChild(opt);});select.disabled=false;fallbackCopySelectedWifi();}).catch(function(err){diag('fallback-wifi-scan-failed','Wi-Fi scan failed',err&&err.stack?err.stack:String(err||''));if(select){select.innerHTML='<option value=\"\">Scan failed - type Wi-Fi name manually</option>';select.disabled=false;}});}";
   html += "function setHidden(id,hidden){var el=byId(id);if(el&&el.classList)el.classList.toggle('hidden',!!hidden);}";
   html += "function fallbackSyncAutoUpdate(){var au=byId('auto_update_enabled');var isAuto=au&&au.value==='1';setHidden('manual_update_section',isAuto);}";
-  html += "function fallbackSyncSetupState(){fallbackSyncCurrencyLabels();fallbackSyncAutoUpdate();var asset=byId('asset_mode');var mode=byId('portfolio_use_mode');var pin=byId('setup_pin_enabled');var refreshValue=byId('refresh_interval_value');var refreshUnit=byId('refresh_interval_unit');var assetValue=asset?asset.value:'2';var modeValue=mode?mode.value:'0';setHidden('mqtt_card',assetValue!=='0');setHidden('wealth_field_wrap',assetValue!=='1');setHidden('manual_btc_field_wrap',assetValue!=='2');setHidden('borrow_fee_wrap',modeValue!=='1');var pinOn=pin&&pin.value==='1';setHidden('setup_pin_wrap',!pinOn);setHidden('setup_pin_confirm_wrap',!pinOn);var isOneDay=refreshUnit&&refreshUnit.value==='2'&&parseInt(refreshValue&&refreshValue.value?refreshValue.value:'',10)===1;setHidden('wake_time_wrap',!isOneDay);}";
+  html += "function fallbackSyncSetupState(){fallbackSyncCurrencyLabels();fallbackSyncAutoUpdate();var asset=byId('asset_mode');var mode=byId('portfolio_use_mode');var pin=byId('setup_pin_enabled');var refreshValue=byId('refresh_interval_value');var refreshUnit=byId('refresh_interval_unit');var income=byId('monthly_income_value');var assetValue=asset?asset.value:'2';var modeValue=mode?mode.value:'0';setHidden('mqtt_card',assetValue!=='0');setHidden('wealth_field_wrap',assetValue!=='1');setHidden('manual_btc_field_wrap',assetValue!=='2');setHidden('borrow_fee_wrap',modeValue!=='1');setHidden('income_growth_wrap',!(income&&parseInt(income.value||'0',10)>0));var pinOn=pin&&pin.value==='1';setHidden('setup_pin_wrap',!pinOn);setHidden('setup_pin_confirm_wrap',!pinOn);var isOneDay=refreshUnit&&refreshUnit.value==='2'&&parseInt(refreshValue&&refreshValue.value?refreshValue.value:'',10)===1;setHidden('wake_time_wrap',!isOneDay);}";
   html += "document.addEventListener('submit',fallbackSave,true);";
   html += "document.addEventListener('input',function(e){syncPasswordToggleForInput(e.target);},true);";
   html += "document.addEventListener('click',function(e){var t=e.target;while(t&&t.tagName!=='BUTTON')t=t.parentNode;if(!t)return;if(t.getAttribute&&t.getAttribute('data-password-toggle')){e.preventDefault();e.stopImmediatePropagation();togglePassword(t);return;}if(/^copy_.*_button$/.test(t.id)){e.preventDefault();e.stopImmediatePropagation();copyFrom(t);return;}if(t.id==='clear_client_diagnostics_button'){e.preventDefault();var txt=byId('client_diagnostics_text');var box=byId('client_diagnostics');if(txt)txt.value='';if(box&&box.classList)box.classList.add('hidden');return;}if(window.fcSetupReady)return;if(t.id==='release_check_button')fallbackRelease(e);else if(t.id==='firmware_install_button')fallbackInstall(e);else if(t.id==='scan_wifi_button')fallbackWifiScan(e);},true);";
-  html += "['asset_mode','portfolio_use_mode','currency_code','setup_pin_enabled','refresh_interval_value','refresh_interval_unit','auto_update_enabled'].forEach(function(id){var el=byId(id);if(el){el.addEventListener('change',fallbackSyncSetupState);el.addEventListener('input',fallbackSyncSetupState);}});";
+  html += "['asset_mode','portfolio_use_mode','currency_code','setup_pin_enabled','refresh_interval_value','refresh_interval_unit','auto_update_enabled','monthly_income_value'].forEach(function(id){var el=byId(id);if(el){el.addEventListener('change',fallbackSyncSetupState);el.addEventListener('input',fallbackSyncSetupState);}});";
   html += "var fallbackWifiSelect=byId('wifi_ssid_select');if(fallbackWifiSelect){fallbackWifiSelect.addEventListener('change',fallbackCopySelectedWifi);fallbackWifiSelect.addEventListener('input',fallbackCopySelectedWifi);}";
   html += "var fallbackFirmwareFile=byId('firmware_file');if(fallbackFirmwareFile){fallbackFirmwareFile.addEventListener('change',function(){if(window.fcSetupReady)return;var btn=byId('firmware_install_button');if(btn)btn.disabled=!(fallbackFirmwareFile.files&&fallbackFirmwareFile.files.length>0);});}";
   html += "fallbackSyncSetupState();syncPasswordToggles();";
@@ -1146,6 +1190,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const manualBtcCurrencyHint=document.getElementById('manual_btc_currency_hint');";
   html += "const wealthCurrencyLabel=document.getElementById('wealth_currency_label');";
   html += "const monthlyCurrencyLabel=document.getElementById('monthly_currency_label');";
+  html += "const incomeCurrencyLabel=document.getElementById('income_currency_label');";
   html += "const topicPriceCurrencyLabel=document.getElementById('topic_price_currency_label');";
   html += "const wealthPrivacyCurrencyLabel=document.getElementById('wealth_privacy_currency_label');";
   html += "const settingsPrivacyCurrencyLabel=document.getElementById('settings_privacy_currency_label');";
@@ -1153,6 +1198,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "const manualBtcWrap=document.getElementById('manual_btc_field_wrap');";
   html += "const borrowWrap=document.getElementById('borrow_fee_wrap');";
   html += "const borrowInput=document.getElementById('borrow_fee_annual_pct');";
+  html += "const incomeGrowthWrap=document.getElementById('income_growth_wrap');";
   html += "const setupPinEnabled=document.getElementById('setup_pin_enabled');";
   html += "const setupPinWrap=document.getElementById('setup_pin_wrap');";
   html += "const setupPinConfirmWrap=document.getElementById('setup_pin_confirm_wrap');";
@@ -1263,7 +1309,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += String(OWNER_NAME_MAX_DISPLAY_CHARS);
   html += ");}";
   html += "function sanitizeNumberInput(el){if(!el)return;const mode=el.getAttribute('data-number')||'decimal';let value=String(el.value||'').replace(/,/g,'.');if(mode==='int'){el.value=value.replace(/[^0-9]/g,'');return;}value=value.replace(/[^0-9.]/g,'');const firstDot=value.indexOf('.');if(firstDot!==-1){value=value.slice(0,firstDot+1)+value.slice(firstDot+1).replace(/[.]/g,'');}el.value=value;}";
-  html += "function wireNumberInputs(){document.querySelectorAll('[data-number]').forEach(function(el){sanitizeNumberInput(el);el.addEventListener('input',function(){sanitizeNumberInput(el);});el.addEventListener('paste',function(){setTimeout(function(){sanitizeNumberInput(el);},0);});});}";
+  html += "function wireNumberInputs(){document.querySelectorAll('[data-number]').forEach(function(el){sanitizeNumberInput(el);el.addEventListener('input',function(){sanitizeNumberInput(el);if(el.id==='monthly_income_value')syncIncomeGrowthWrap();});el.addEventListener('paste',function(){setTimeout(function(){sanitizeNumberInput(el);if(el.id==='monthly_income_value')syncIncomeGrowthWrap();},0);});});}";
   html += "function normalizeVersion(text){return String(text||'').trim().replace(/^v/i,'');}";
   html += "function flashCopyButton(btn,text,ms,disabled){if(!btn)return;const orig=btn.textContent;btn.textContent=text;if(disabled)btn.disabled=true;setTimeout(function(){btn.textContent=orig;if(disabled)btn.disabled=false;},ms||2200);}";
   html += "function selectCopySource(el){if(!el)return false;try{if(el.select){focusWithoutScroll(el);el.select();if(el.setSelectionRange)el.setSelectionRange(0,(el.value||'').length);return true;}const range=document.createRange();range.selectNodeContents(el);const sel=window.getSelection();if(sel){sel.removeAllRanges();sel.addRange(range);return true;}}catch(e){}return false;}";
@@ -1285,17 +1331,18 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += " .bin package for manual update.','err');return;}if(!newer){setReleaseStatus('You are using the latest version.','ok');return;}if(latestReleaseUrlRow)latestReleaseUrlRow.classList.remove('hidden');if(releaseSummary)releaseSummary.classList.remove('hidden');setReleaseStatus('New software is available.','ok');}";
   html += "function readNumber(id){const el=document.getElementById(id);const value=parseFloat(el&&el.value?el.value:'');return Number.isFinite(value)?value:0;}";
   html += "function selectedCurrencyLabel(){if(!currencySelect)return 'USD';const opt=currencySelect.options[currencySelect.selectedIndex];return opt?String(opt.textContent||'USD').trim():'USD';}";
-  html += "function updateCurrencyLabels(){const cur=selectedCurrencyLabel();if(manualBtcCurrencyHint)manualBtcCurrencyHint.textContent='BTC/'+cur+' price is fetched from CoinGecko over the internet, with mempool.space as backup.';if(wealthCurrencyLabel)wealthCurrencyLabel.textContent='Static wealth ('+cur+')';if(monthlyCurrencyLabel)monthlyCurrencyLabel.textContent='Monthly expenses ('+cur+')';if(topicPriceCurrencyLabel)topicPriceCurrencyLabel.textContent='BTC price topic ('+cur+')';if(wealthPrivacyCurrencyLabel)wealthPrivacyCurrencyLabel.textContent=cur;if(settingsPrivacyCurrencyLabel)settingsPrivacyCurrencyLabel.textContent=cur;}";
+  html += "function updateCurrencyLabels(){const cur=selectedCurrencyLabel();if(manualBtcCurrencyHint)manualBtcCurrencyHint.textContent='BTC/'+cur+' price is fetched from CoinGecko over the internet, with mempool.space as backup.';if(wealthCurrencyLabel)wealthCurrencyLabel.textContent='Static wealth ('+cur+')';if(monthlyCurrencyLabel)monthlyCurrencyLabel.textContent='Monthly expenses ('+cur+')';if(incomeCurrencyLabel)incomeCurrencyLabel.textContent='Monthly income ('+cur+')';if(topicPriceCurrencyLabel)topicPriceCurrencyLabel.textContent='BTC price topic ('+cur+')';if(wealthPrivacyCurrencyLabel)wealthPrivacyCurrencyLabel.textContent=cur;if(settingsPrivacyCurrencyLabel)settingsPrivacyCurrencyLabel.textContent=cur;}";
   html += "function syncDefaultMqttPriceTopic(){if(!topicPriceInput)return;const value=String(topicPriceInput.value||'').trim().toLowerCase();if(!/^home\\/bitcoin\\/price\\/(usd|eur|chf)$/.test(value))return;topicPriceInput.value='home/bitcoin/price/'+selectedCurrencyLabel().toLowerCase();}";
   html += "function formatMoney(value){const cur=selectedCurrencyLabel();if(!(value>=0))return '--';if(value>=1000000)return (value/1000000).toFixed(2)+' mil '+cur;if(value>=1000)return (value/1000).toFixed(2)+'k '+cur;return value.toFixed(2)+' '+cur;}";
-  html += "function computeFreedom(wealthValue,monthlyExpenseToday,inflationAnnual,assetGrowthAnnual,useMode,borrowFeeAnnual){const out={hitCap:false,years:0,months:0,weeks:0,coveredWeeks:0};if(!(wealthValue>0)||!(monthlyExpenseToday>0))return out;if(!(inflationAnnual>=0))inflationAnnual=0;if(!(assetGrowthAnnual>-0.99))assetGrowthAnnual=-0.99;if(!(borrowFeeAnnual>-0.99))borrowFeeAnnual=-0.99;const maxYears=200;const maxMonths=12*maxYears;if(useMode==='1'){let annualExpenseMul=1+inflationAnnual;let annualAssetMul=1+assetGrowthAnnual;let annualDebtMul=1+borrowFeeAnnual;let annualExpense=monthlyExpenseToday*12;let collateralValue=wealthValue;let debt=0;let years=0;while(years<maxYears){collateralValue*=annualAssetMul;debt*=annualDebtMul;if((debt+annualExpense)>collateralValue)break;debt+=annualExpense;annualExpense*=annualExpenseMul;years++;}out.hitCap=years>=maxYears;let partialYear=0;if(!out.hitCap&&annualExpense>0&&collateralValue>debt){partialYear=(collateralValue-debt)/annualExpense;if(partialYear>0.999)partialYear=0.999;if(partialYear<0)partialYear=0;}const coveredMonthsFloat=(years+partialYear)*12;const coveredFullMonths=Math.floor(coveredMonthsFloat);const partialMonth=coveredMonthsFloat-coveredFullMonths;out.years=Math.floor(coveredFullMonths/12);out.months=coveredFullMonths%12;out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=coveredMonthsFloat*4.345;return out;}let monthlyExpenseMul=Math.pow(1+inflationAnnual,1/12);let monthlyAssetMul=Math.pow(1+assetGrowthAnnual,1/12);let monthlyExpense=monthlyExpenseToday;let remaining=wealthValue;let months=0;while(months<maxMonths){remaining*=monthlyAssetMul;if(remaining<monthlyExpense)break;remaining-=monthlyExpense;monthlyExpense*=monthlyExpenseMul;months++;}out.hitCap=months>=maxMonths;out.years=Math.floor(months/12);out.months=months%12;let partialMonth=0;if(monthlyExpense>0&&remaining>0){partialMonth=remaining/monthlyExpense;if(partialMonth>0.999)partialMonth=0.999;if(partialMonth<0)partialMonth=0;}out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=months*4.345+(partialMonth*4.345);return out;}";
+  html += "function computeFreedom(wealthValue,monthlyExpenseToday,monthlyIncomeToday,inflationAnnual,incomeGrowthAnnual,assetGrowthAnnual,useMode,borrowFeeAnnual){const out={hitCap:false,years:0,months:0,weeks:0,coveredWeeks:0};if(!(wealthValue>0)||!(monthlyExpenseToday>0))return out;if(!(monthlyIncomeToday>=0))monthlyIncomeToday=0;if(!(inflationAnnual>=0))inflationAnnual=0;if(!(incomeGrowthAnnual>=0))incomeGrowthAnnual=0;if(!(assetGrowthAnnual>-0.99))assetGrowthAnnual=-0.99;if(!(borrowFeeAnnual>-0.99))borrowFeeAnnual=-0.99;const maxYears=200;const maxMonths=12*maxYears;if(useMode==='1'){let annualExpenseMul=1+inflationAnnual;let annualIncomeMul=1+incomeGrowthAnnual;let annualAssetMul=1+assetGrowthAnnual;let annualDebtMul=1+borrowFeeAnnual;let annualExpense=monthlyExpenseToday*12;let annualIncome=monthlyIncomeToday*12;let collateralValue=wealthValue;let debt=0;let years=0;while(years<maxYears){collateralValue*=annualAssetMul;debt*=annualDebtMul;const annualBorrow=Math.max(0,annualExpense-annualIncome);if((debt+annualBorrow)>collateralValue)break;debt+=annualBorrow;annualExpense*=annualExpenseMul;annualIncome*=annualIncomeMul;years++;}out.hitCap=years>=maxYears;let partialYear=0;const finalAnnualShortfall=annualExpense-annualIncome;if(!out.hitCap&&finalAnnualShortfall>0&&collateralValue>debt){partialYear=(collateralValue-debt)/finalAnnualShortfall;if(partialYear>0.999)partialYear=0.999;if(partialYear<0)partialYear=0;}const coveredMonthsFloat=(years+partialYear)*12;const coveredFullMonths=Math.floor(coveredMonthsFloat);const partialMonth=coveredMonthsFloat-coveredFullMonths;out.years=Math.floor(coveredFullMonths/12);out.months=coveredFullMonths%12;out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=coveredMonthsFloat*4.345;return out;}let monthlyExpenseMul=Math.pow(1+inflationAnnual,1/12);let monthlyIncomeMul=Math.pow(1+incomeGrowthAnnual,1/12);let monthlyAssetMul=Math.pow(1+assetGrowthAnnual,1/12);let monthlyExpense=monthlyExpenseToday;let monthlyIncome=monthlyIncomeToday;let remaining=wealthValue;let months=0;while(months<maxMonths){remaining*=monthlyAssetMul;const monthlyWithdrawal=Math.max(0,monthlyExpense-monthlyIncome);if(remaining<monthlyWithdrawal)break;remaining-=monthlyWithdrawal;monthlyExpense*=monthlyExpenseMul;monthlyIncome*=monthlyIncomeMul;months++;}out.hitCap=months>=maxMonths;out.years=Math.floor(months/12);out.months=months%12;let partialMonth=0;const finalMonthlyShortfall=monthlyExpense-monthlyIncome;if(finalMonthlyShortfall>0&&remaining>0){partialMonth=remaining/finalMonthlyShortfall;if(partialMonth>0.999)partialMonth=0.999;if(partialMonth<0)partialMonth=0;}out.weeks=Math.max(0,Math.min(4,Math.floor(partialMonth*4.345+0.5)));out.coveredWeeks=months*4.345+(partialMonth*4.345);return out;}";
   html += "function formatFreedom(result){if(result.hitCap)return 'FOREVER';if(result.years>99)return String(result.years)+'Y';const years=String(result.years).padStart(2,'0');const months=String(result.months).padStart(2,'0');return years+'Y '+months+'M '+String(result.weeks)+'W';}";
   html += "function capturePreviewMarketValues(message){const text=String(message||'');const priceMatch=text.match(/(?:BTC price|Price):\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(priceMatch){const parsed=parseFloat(priceMatch[1]);if(Number.isFinite(parsed)&&parsed>0){previewPriceValue=parsed;previewHasPriceValue=true;}}const amountMatch=text.match(/(?:BTC amount|Amount):\\s*([0-9]+(?:\\.[0-9]+)?)/i);if(amountMatch){const parsed=parseFloat(amountMatch[1]);if(Number.isFinite(parsed)&&parsed>=0){previewMqttBalanceBtc=parsed;previewHasMqttBalanceBtc=true;}}}";
-  html += "function updateFreedomPreview(){if(!freedomPreviewValue||!freedomPreviewHint)return;const assetMode=asset?asset.value:'2';const useMode=mode?mode.value:'0';let wealthValue=0;let canPreview=false;let hint='';if(assetMode==='1'){wealthValue=readNumber('default_wealth_value');canPreview=true;}else if(assetMode==='2'){const btc=readNumber('manual_btc_amount');if(previewHasPriceValue&&previewPriceValue>0){wealthValue=btc*previewPriceValue;canPreview=true;}}else{if(previewHasPriceValue&&previewHasMqttBalanceBtc&&previewPriceValue>0&&previewMqttBalanceBtc>=0){wealthValue=previewMqttBalanceBtc*previewPriceValue;canPreview=true;}}if(!canPreview){if(freedomPreviewCard)freedomPreviewCard.classList.add('hidden');freedomPreviewValue.textContent='';freedomPreviewHint.textContent='';return;}if(freedomPreviewCard)freedomPreviewCard.classList.remove('hidden');const result=computeFreedom(wealthValue,readNumber('monthly_exp_value'),readNumber('inflation_annual_pct')/100,readNumber('wealth_growth_annual_pct')/100,useMode,readNumber('borrow_fee_annual_pct')/100);freedomPreviewValue.textContent=formatFreedom(result);if(result.hitCap)hint='FOREVER means the model reached the device cap of 200 years.';freedomPreviewHint.textContent=hint;}";
-  html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:15,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:15,max:10080,hint:'Choose 15 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
+  html += "function updateFreedomPreview(){if(!freedomPreviewValue||!freedomPreviewHint)return;const assetMode=asset?asset.value:'2';const useMode=mode?mode.value:'0';let wealthValue=0;let canPreview=false;let hint='';if(assetMode==='1'){wealthValue=readNumber('default_wealth_value');canPreview=true;}else if(assetMode==='2'){const btc=readNumber('manual_btc_amount');if(previewHasPriceValue&&previewPriceValue>0){wealthValue=btc*previewPriceValue;canPreview=true;}}else{if(previewHasPriceValue&&previewHasMqttBalanceBtc&&previewPriceValue>0&&previewMqttBalanceBtc>=0){wealthValue=previewMqttBalanceBtc*previewPriceValue;canPreview=true;}}if(!canPreview){if(freedomPreviewCard)freedomPreviewCard.classList.add('hidden');freedomPreviewValue.textContent='';freedomPreviewHint.textContent='';return;}if(freedomPreviewCard)freedomPreviewCard.classList.remove('hidden');const result=computeFreedom(wealthValue,readNumber('monthly_exp_value'),readNumber('monthly_income_value'),readNumber('inflation_annual_pct')/100,readNumber('income_growth_annual_pct')/100,readNumber('wealth_growth_annual_pct')/100,useMode,readNumber('borrow_fee_annual_pct')/100);freedomPreviewValue.textContent=formatFreedom(result);if(result.hitCap)hint='FOREVER means the model reached the device cap of 200 years.';freedomPreviewHint.textContent=hint;}";
+  html += "function refreshSettingsForUnit(){if(!refreshUnitSelect)return{min:1,max:10080,hint:'Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='2')return{min:1,max:7,hint:'Choose 1 to 7 days. Default is 1 day. Shorter intervals use more battery.'};if(refreshUnitSelect.value==='1')return{min:1,max:168,hint:'Choose 1 to 168 hours. Default is 24 hours. Shorter intervals use more battery.'};return{min:1,max:10080,hint:'Choose 1 to 10080 minutes. Default is 1440 minutes, which is 1 day. Shorter intervals use more battery.'};}";
   html += "function updateRefreshControls(clampValue){if(!refreshValueInput)return;const settings=refreshSettingsForUnit();refreshValueInput.min=String(settings.min);refreshValueInput.max=String(settings.max);refreshValueInput.step='1';let value=parseInt(refreshValueInput.value||'',10);if(clampValue!==false){if(!Number.isFinite(value))value=settings.min;if(value<settings.min)value=settings.min;if(value>settings.max)value=settings.max;refreshValueInput.value=String(value);}const currentValue=Number.isFinite(value)?value:0;if(refreshHint)refreshHint.textContent=settings.hint;const isOneDay=refreshUnitSelect&&refreshUnitSelect.value==='2'&&currentValue===1;if(wakeTimeWrap)wakeTimeWrap.classList.toggle('hidden',!isOneDay);if(wakeTimeHint)wakeTimeHint.textContent='The device refreshes once per day at this local time in the selected UTC zone. DST-aware zones adjust automatically.';}";
   html += "function onRefreshValueInput(){updateRefreshControls(false);}";
   html += "function updateAutoUpdateUI(){const isAuto=autoUpdateSelect&&autoUpdateSelect.value==='1';if(autoUpdateHidden)autoUpdateHidden.value=autoUpdateSelect?autoUpdateSelect.value:'1';if(manualUpdateSection)manualUpdateSection.classList.toggle('hidden',isAuto);hideReleaseSummary();setReleaseStatus('','info');if(isAuto&&autoUpdateUiInitialized)checkLatestRelease(null);}";
+  html += "function syncIncomeGrowthWrap(){var val=readNumber('monthly_income_value');if(incomeGrowthWrap){if(val>0){incomeGrowthWrap.classList.remove('hidden');}else{incomeGrowthWrap.classList.add('hidden');}}}";
   html += "function update(){";
   html += "const isMqttBtc=asset&&asset.value==='0';";
   html += "const isWealth=asset&&asset.value==='1';";
@@ -1305,6 +1352,7 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(manualBtcWrap) manualBtcWrap.classList.toggle('hidden', !isManualBtc);";
   html += "if(mqttCard) mqttCard.classList.toggle('hidden', !isMqttBtc);";
   html += "if(borrowWrap) borrowWrap.classList.toggle('hidden', !isBorrow);";
+  html += "syncIncomeGrowthWrap();";
   html += "const pinProtected=setupPinEnabled&&setupPinEnabled.value==='1';";
   html += "if(setupPinWrap) setupPinWrap.classList.toggle('hidden', !pinProtected);";
   html += "if(setupPinConfirmWrap) setupPinConfirmWrap.classList.toggle('hidden', !pinProtected);";
@@ -1413,11 +1461,12 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "}";
   html += "function installSelectedFirmware(){if(hasManualFirmwareFile()){if(!validateManualFirmwareFile())return;installManualFirmware();return;}if(onlineFirmwareAvailable){installOnlineFirmware();return;}const message='Choose a software .bin file or check for a newer release first.';setFirmwareStatus(message,'err');setReleaseStatus(message,'err');";
   html += "}";
-  html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;updateFreedomPreview();}";
+  html += "function onFormEdited(event){if(event&&event.target===wifiSelect)return;if(event&&event.target&&event.target.id==='monthly_income_value'){syncIncomeGrowthWrap();}updateFreedomPreview();}";
   html += "if(asset) asset.addEventListener('change', update);";
   html += "if(mode) mode.addEventListener('change', update);";
   html += "if(currencySelect) currencySelect.addEventListener('change', function(){syncDefaultMqttPriceTopic();updateCurrencyLabels();updateFreedomPreview();});";
   html += "if(setupPinEnabled) setupPinEnabled.addEventListener('change', update);";
+  html += "{var mi=document.getElementById('monthly_income_value');if(mi){mi.addEventListener('input',function(){sanitizeNumberInput(mi);syncIncomeGrowthWrap();updateFreedomPreview();});mi.addEventListener('change',function(){sanitizeNumberInput(mi);syncIncomeGrowthWrap();updateFreedomPreview();});}}";
   html += "if(refreshUnitSelect) refreshUnitSelect.addEventListener('change', function(){updateRefreshControls();});";
   html += "if(refreshValueInput) refreshValueInput.addEventListener('input', onRefreshValueInput);";
   html += "if(refreshValueInput) refreshValueInput.addEventListener('blur', function(){updateRefreshControls(true);});";
@@ -1426,8 +1475,9 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "if(wifiPassInput) wifiPassInput.addEventListener('input', function(){if(clearWifiPass&&wifiPassInput.value)clearWifiPass.checked=false;});";
   html += "if(mqttPassInput) mqttPassInput.addEventListener('input', function(){if(clearMqttPass&&mqttPassInput.value)clearMqttPass.checked=false;});";
   html += "if(wifiSelect){const copySelectedWifi=function(){if(wifiSsidInput&&wifiSelect.value)wifiSsidInput.value=wifiSelect.value;};wifiSelect.addEventListener('change',copySelectedWifi);wifiSelect.addEventListener('input',copySelectedWifi);}";
-  html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', async function(event){event.preventDefault();if(saveInFlight)return;saveInFlight=true;const saveOverlay=document.getElementById('save_overlay');const saveOverlayText=document.getElementById('save_overlay_text');const focusGuard=document.getElementById('focus_guard');setStatus('','info');if(focusGuard)try{focusGuard.focus({preventScroll:true});}catch(e){}document.body.style.overflow='hidden';if(saveOverlay)saveOverlay.classList.remove('hidden');if(saveOverlayText)saveOverlayText.textContent='Checking settings…';function returnFocusToSave(){const sb=document.getElementById('save_button');if(sb)try{sb.focus({preventScroll:true});}catch(e){}}function abortSave(msg){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;if(msg)setStatus(msg,'err');}try{const params=new URLSearchParams(new FormData(form));let vData;try{const vResponse=await fetchWithTimeout('/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},60000);vData=await vResponse.json();}catch(e){appendClientDiagnostic('validate-fetch-failed','Settings check failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Settings check timed out. Reconnect to the device Wi-Fi and try again.':'Settings check failed. Stay connected and try again.');return;}if(handleUnlockRequired(vData,setStatus)){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;return;}if(!vData.ok){abortSave(vData.message||'Settings check failed.');return;}capturePreviewMarketValues(vData.message||'');updateFreedomPreview();if(saveOverlayText)saveOverlayText.textContent='Saving settings…';params.set('_fc_fetch','1');try{const sResponse=await fetchWithTimeout('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},15000);const sData=await sResponse.json();if(!sData.ok){abortSave(sData.error||'Failed to save settings.');return;}}catch(e){appendClientDiagnostic('save-fetch-failed','Save request failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Save timed out. Reconnect to the device Wi-Fi and try again.':'Failed to save settings. Stay connected and try again.');return;}if(saveOverlayText)saveOverlayText.innerHTML='Settings saved!<br>Device is restarting…';}catch(err){appendClientDiagnostic('save-handler-error','Save handler error',err&&err.stack?err.stack:String(err||''));abortSave('An error occurred. Please try again.');}});if(saveButton)saveButton.disabled=false;}";
+  html += "if(form){form.addEventListener('input', onFormEdited);form.addEventListener('change', onFormEdited);form.addEventListener('submit', async function(event){event.preventDefault();if(saveInFlight)return;saveInFlight=true;const saveOverlay=document.getElementById('save_overlay');const saveOverlayText=document.getElementById('save_overlay_text');const focusGuard=document.getElementById('focus_guard');setStatus('','info');if(focusGuard)try{focusGuard.focus({preventScroll:true});}catch(e){}document.body.style.overflow='hidden';if(saveOverlay)saveOverlay.classList.remove('hidden');if(saveOverlayText)saveOverlayText.textContent='Checking settings…';function returnFocusToSave(){const sb=document.getElementById('save_button');if(sb)try{sb.focus({preventScroll:true});}catch(e){}}function abortSave(msg){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;if(msg)setStatus(msg,'err');}try{document.querySelectorAll('[data-number]').forEach(function(el){sanitizeNumberInput(el);});const params=new URLSearchParams(new FormData(form));let vData;try{const vResponse=await fetchWithTimeout('/validate',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},60000);vData=await vResponse.json();}catch(e){appendClientDiagnostic('validate-fetch-failed','Settings check failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Settings check timed out. Reconnect to the device Wi-Fi and try again.':'Settings check failed. Stay connected and try again.');return;}if(handleUnlockRequired(vData,setStatus)){returnFocusToSave();if(saveOverlay)saveOverlay.classList.add('hidden');document.body.style.overflow='';saveInFlight=false;return;}if(!vData.ok){abortSave(vData.message||'Settings check failed.');return;}capturePreviewMarketValues(vData.message||'');updateFreedomPreview();if(saveOverlayText)saveOverlayText.textContent='Saving settings…';params.set('_fc_fetch','1');try{const sResponse=await fetchWithTimeout('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},body:params.toString(),cache:'no-store'},15000);const sData=await sResponse.json();if(!sData.ok){abortSave(sData.error||'Failed to save settings.');return;}}catch(e){appendClientDiagnostic('save-fetch-failed','Save request failed',e&&e.stack?e.stack:String(e||''));abortSave(e&&e.name==='AbortError'?'Save timed out. Reconnect to the device Wi-Fi and try again.':'Failed to save settings. Stay connected and try again.');return;}if(saveOverlayText)saveOverlayText.innerHTML='Settings saved!<br>Device is restarting…';}catch(err){appendClientDiagnostic('save-handler-error','Save handler error',err&&err.stack?err.stack:String(err||''));abortSave('An error occurred. Please try again.');}});if(saveButton)saveButton.disabled=false;}";
   html += "if(firmwareFileInput) firmwareFileInput.addEventListener('change', function(){setFirmwareStatus('', 'info');updateFirmwareInstallButton();});";
+  html += "{const previewFields=['default_wealth_value','manual_btc_amount','monthly_exp_value','monthly_income_value','inflation_annual_pct','income_growth_annual_pct','wealth_growth_annual_pct','borrow_fee_annual_pct'];if(form)form.addEventListener('input',function(e){if(e.target&&previewFields.indexOf(e.target.id)>=0)updateFreedomPreview();});}";
   html += "if(releaseCheckButton) releaseCheckButton.addEventListener('click', checkLatestRelease);";
   html += "if(firmwareInstallButton) firmwareInstallButton.addEventListener('click', installSelectedFirmware);";
   html += "if(copyLatestReleaseUrlButton) copyLatestReleaseUrlButton.addEventListener('click', function(){copyText(latestReleaseUrlText?latestReleaseUrlText.textContent:'','Latest release URL',copyLatestReleaseUrlButton,latestReleaseUrlText);});";
@@ -1469,8 +1519,8 @@ static constexpr int BATTERY_GROUP_MIN_X = DEVICE_DISPLAY_WIDTH
   - BATTERY_TEXT_GAP
   - BATTERY_BODY_W
   - BATTERY_TIP_W;
-static constexpr int BATTERY_ICON_Y = 5;
-static constexpr int BATTERY_TEXT_Y = 7;
+static constexpr int BATTERY_ICON_Y = 3;
+static constexpr int BATTERY_TEXT_Y = 5;
 
 static void drawBatteryIcon(
   int x,
@@ -1552,9 +1602,11 @@ static void loadSubmittedPortalConfig(DeviceConfig& submitted) {
     submitted.refreshIntervalMinutes = (uint16_t)portalServer.arg("refresh_interval_minutes").toInt();
   }
   submitted.monthlyExpenseValue = portalServer.arg("monthly_exp_value").toFloat();
-  submitted.inflationAnnual = portalServer.arg("inflation_annual_pct").toFloat() / 100.0f;
-  submitted.wealthGrowthAnnual = portalServer.arg("wealth_growth_annual_pct").toFloat() / 100.0f;
-  submitted.defaultWealthValue = portalServer.arg("default_wealth_value").toFloat();
+  submitted.monthlyIncomeValue = portalServer.arg("monthly_income_value").toFloat();
+  submitted.inflationAnnual = parsePortalFloatArg("inflation_annual_pct") / 100.0f;
+  submitted.incomeGrowthAnnual = parsePortalFloatArg("income_growth_annual_pct") / 100.0f;
+  submitted.wealthGrowthAnnual = parsePortalFloatArg("wealth_growth_annual_pct") / 100.0f;
+  submitted.defaultWealthValue = parsePortalFloatArg("default_wealth_value");
   normalizeDecimalInputText(
     portalServer.arg("manual_btc_amount"),
     submitted.manualBtcAmountText,
@@ -1563,7 +1615,7 @@ static void loadSubmittedPortalConfig(DeviceConfig& submitted) {
     DEFAULT_MANUAL_BTC_AMOUNT_TEXT
   );
   submitted.manualBtcAmount = strtof(submitted.manualBtcAmountText, nullptr);
-  submitted.borrowFeeAnnual = portalServer.arg("borrow_fee_annual_pct").toFloat() / 100.0f;
+  submitted.borrowFeeAnnual = parsePortalFloatArg("borrow_fee_annual_pct") / 100.0f;
   submitted.assetMode = (uint8_t)portalServer.arg("asset_mode").toInt();
   submitted.portfolioUseMode = (uint8_t)portalServer.arg("portfolio_use_mode").toInt();
   submitted.currencyCode = sanitizeCurrencyCode((uint8_t)portalServer.arg("currency_code").toInt());
@@ -1675,9 +1727,6 @@ static void handlePortalSave() {
   const String requestedPin = portalServer.arg("setup_pin");
   const String requestedPinConfirm = portalServer.arg("setup_pin_confirm");
 
-  loadSubmittedPortalConfig(submitted);
-  const bool sourceChanged = didHistorySourceChange(deviceConfig, submitted);
-
   auto sendSaveError = [&](const char* msg) {
     if (isFetch) {
       String json = F("{\"ok\":false,\"error\":\"");
@@ -1690,6 +1739,14 @@ static void handlePortalSave() {
       portalSendHtml(buildPortalPage(submitted, msg, true));
     }
   };
+
+  if (!validatePortalRefreshIntervalForm(errorMessage, sizeof(errorMessage))) {
+    sendSaveError(errorMessage);
+    return;
+  }
+
+  loadSubmittedPortalConfig(submitted);
+  const bool sourceChanged = didHistorySourceChange(deviceConfig, submitted);
 
   if (!validateDeviceConfig(submitted, errorMessage, sizeof(errorMessage))) {
     sendSaveError(errorMessage);
@@ -2246,6 +2303,12 @@ static void handlePortalValidate() {
   const bool requestedPinEnabled = portalServer.arg("setup_pin_enabled").toInt() == 1;
   const String requestedPin = portalServer.arg("setup_pin");
   const String requestedPinConfirm = portalServer.arg("setup_pin_confirm");
+
+  if (!validatePortalRefreshIntervalForm(errorMessage, sizeof(errorMessage))) {
+    portalSendJson(false, errorMessage);
+    return;
+  }
+
   loadSubmittedPortalConfig(submitted);
   const bool sourceChanged = didHistorySourceChange(deviceConfig, submitted);
   const char* sourceChangedNote = sourceChanged
@@ -2607,6 +2670,8 @@ static void factoryResetAndShowWelcome() {
   clearBatteryLogInMemory(batteryLog);
   clearWealthHistoryInMemory(wealthHistory);
   applyDefaultDeviceConfig(deviceConfig);
+  setPostSaveRestartPending(false);
+  rtcPortalSaveRestartPending = false;
   rtcFactoryResetPending = true;
   drawSetupPortalResetScreen();
   delay(1200);
