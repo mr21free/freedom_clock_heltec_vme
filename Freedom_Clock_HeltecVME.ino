@@ -6,6 +6,7 @@
 #include <HTTPClient.h>
 #include <Update.h>
 #include <WiFiClientSecure.h>
+#include <SPIFFS.h>
 #include <heltec-eink-modules.h>
 #include "mbedtls/sha256.h"
 #include "esp_sleep.h"
@@ -240,6 +241,7 @@ struct GitHubReleaseInfo {
 static DeviceConfig deviceConfig = {};
 static WealthHistory wealthHistory = {};
 static BatteryLog batteryLog = {};
+static char batteryLogStorageStatus[160] = "not loaded";
 static AppScreenId portalExitScreen = APP_SCREEN_MAIN;
 static char lastConfigLoadStatus[CONFIG_LOAD_STATUS_SIZE] = "not loaded";
 static uint32_t lastConfigStoredVersion = 0;

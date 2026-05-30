@@ -784,14 +784,6 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   float previewBalanceBtc = 0.0f;
   const bool previewHasPriceValue = parseNonNegativeFloatStrict(previewPriceText, previewPriceValue, false);
   const bool previewHasBalanceBtc = parseNonNegativeFloatStrict(previewBalanceText, previewBalanceBtc, true);
-#if ENABLE_DEVELOPER_STATS
-  const String batteryLogText = buildBatteryLogText(batteryLog);
-  const String developerStatsText = buildDeveloperStatsText();
-  const String historyStatsText = buildHistoryStatsText(wealthHistory, selectedCurrency);
-  const String lastBootPathDiagnosticsText = loadLastBootPathDiagnosticsText();
-  const String lastAppBootDiagnosticsText = loadLastAppBootDiagnosticsText();
-  const String lastPortalDiagnosticsText = loadLastPortalDiagnosticsText();
-#endif
   html.reserve(90000);
 
   html += "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">";
@@ -863,6 +855,8 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "button[disabled]{opacity:.45;cursor:not-allowed;}";
   html += "a.extlink{color:#8b4f00;font-weight:700;text-decoration:none;}";
   html += "a.extlink:hover,a.extlink:focus{text-decoration:underline;}";
+  html += "a.raw-link{display:inline-flex;align-items:center;min-height:36px;padding:0 14px;border-radius:999px;background:#f1eadf;color:#211d19;font-size:14px;font-weight:700;text-decoration:none;}";
+  html += "a.raw-link:hover,a.raw-link:focus{text-decoration:underline;}";
   html += ".subtle{font-size:13px;color:#645c53;}";
   html += "@media (min-width:760px){.display-grid #wake_time_wrap{display:contents;}.display-grid #wake_time_wrap.hidden{display:none!important;}.display-grid #wake_time_wrap>.grid{display:contents;}.display-grid #wake_time_hint{grid-column:2 / span 2;max-width:520px;margin-top:-20px;align-self:start;}}";
   html += "@media (max-width:640px){.brand{font-size:25px;}}";
@@ -1133,47 +1127,44 @@ static String buildPortalPage(const DeviceConfig& cfg, const char* statusMessage
   html += "<div class=\"hint\">Local development tools. These exports can include sensitive device, battery, and financial history data.</div>";
   html += "<div style=\"margin-top:16px;\"><h3 style=\"margin:0 0 8px;font-size:16px;\">Last boot path diagnostics</h3>";
   html += "<div class=\"hint\">Shows which early boot path the device entered: welcome, setup portal, factory reset, or app screen.</div>";
-  html += "<textarea id=\"boot_path_diagnostics_text\" readonly>";
-  html += htmlEscape(lastBootPathDiagnosticsText.c_str());
-  html += "</textarea>";
-  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_boot_path_diagnostics_button\" class=\"secondary\" type=\"button\">Copy</button></div>";
+  html += "<textarea id=\"boot_path_diagnostics_text\" data-dev-text=\"boot\" readonly>Loading ...</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_boot_path_diagnostics_button\" class=\"secondary\" type=\"button\">Copy</button><a class=\"raw-link\" href=\"/developer-text?name=boot\">Open raw</a></div>";
   html += "</div>";
   html += "<div style=\"margin-top:16px;\"><h3 style=\"margin:0 0 8px;font-size:16px;\">Last app boot diagnostics</h3>";
   html += "<div class=\"hint\">Copy this after reproducing button, wake, or partial-refresh issues. It records reset/wake reasons and screen-render decisions without BTC amounts, passwords, or PIN data.</div>";
-  html += "<textarea id=\"app_boot_diagnostics_text\" readonly>";
-  html += htmlEscape(lastAppBootDiagnosticsText.c_str());
-  html += "</textarea>";
-  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_app_boot_diagnostics_button\" class=\"secondary\" type=\"button\">Copy</button></div>";
+  html += "<textarea id=\"app_boot_diagnostics_text\" data-dev-text=\"app\" readonly>Loading ...</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_app_boot_diagnostics_button\" class=\"secondary\" type=\"button\">Copy</button><a class=\"raw-link\" href=\"/developer-text?name=app\">Open raw</a></div>";
   html += "</div>";
   html += "<div style=\"margin-top:16px;\"><h3 style=\"margin:0 0 8px;font-size:16px;\">Last setup portal diagnostics</h3>";
   html += "<div class=\"hint\">Copy this if the device unexpectedly shows SETUP ERROR or enters setup after saving settings. It records AP startup state, exit action, button pins, and the post-save restart guard.</div>";
-  html += "<textarea id=\"portal_diagnostics_text\" readonly>";
-  html += htmlEscape(lastPortalDiagnosticsText.c_str());
-  html += "</textarea>";
-  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_portal_diagnostics_button\" class=\"secondary\" type=\"button\">Copy</button></div>";
+  html += "<textarea id=\"portal_diagnostics_text\" data-dev-text=\"portal\" readonly>Loading ...</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_portal_diagnostics_button\" class=\"secondary\" type=\"button\">Copy</button><a class=\"raw-link\" href=\"/developer-text?name=portal\">Open raw</a></div>";
   html += "</div>";
   html += "<div style=\"margin-top:16px;\"><h3 style=\"margin:0 0 8px;font-size:16px;\">Battery stats</h3>";
   html += "<div class=\"hint\">Each wake records measured battery voltage and the percent shown by the device. Copy this log when we need to tune the battery curve.</div>";
-  html += "<textarea id=\"battery_log_text\" readonly>";
-  html += htmlEscape(batteryLogText.c_str());
-  html += "</textarea>";
-  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_battery_log_button\" class=\"secondary\" type=\"button\">Copy</button></div>";
+  html += "<textarea id=\"battery_log_text\" data-dev-text=\"battery\" readonly>Loading ...</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_battery_log_button\" class=\"secondary\" type=\"button\">Copy</button><a class=\"raw-link\" href=\"/developer-text?name=battery\">Open raw</a></div>";
   html += "</div>";
   html += "<div style=\"margin-top:16px;\"><h3 style=\"margin:0 0 8px;font-size:16px;\">Storage stats</h3>";
   html += "<div class=\"hint\">Enabled by local build flag. Use this to watch sketch, update partition, heap, NVS, and quote database size before release.</div>";
-  html += "<textarea id=\"developer_stats_text\" readonly>";
-  html += htmlEscape(developerStatsText.c_str());
-  html += "</textarea>";
-  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_developer_stats_button\" class=\"secondary\" type=\"button\">Copy</button></div>";
+  html += "<textarea id=\"developer_stats_text\" data-dev-text=\"storage\" readonly>Loading ...</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_developer_stats_button\" class=\"secondary\" type=\"button\">Copy</button><a class=\"raw-link\" href=\"/developer-text?name=storage\">Open raw</a></div>";
   html += "</div>";
   html += "<div style=\"margin-top:16px;\"><h3 style=\"margin:0 0 8px;font-size:16px;\">History stats</h3>";
   html += "<div class=\"hint\">Developer-only export of the stored wealth/BTC history used by the freedom change and wealth change screens. This is sensitive financial data.</div>";
-  html += "<textarea id=\"history_stats_text\" readonly>";
-  html += htmlEscape(historyStatsText.c_str());
-  html += "</textarea>";
-  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_history_stats_button\" class=\"secondary\" type=\"button\">Copy</button></div>";
+  html += "<textarea id=\"history_stats_text\" data-dev-text=\"history\" readonly>Loading ...</textarea>";
+  html += "<div class=\"actions\" style=\"margin-top:12px;\"><button id=\"copy_history_stats_button\" class=\"secondary\" type=\"button\">Copy</button><a class=\"raw-link\" href=\"/developer-text?name=history\">Open raw</a></div>";
   html += "</div>";
   html += "</section>";
+  html += "<script>";
+  html += "(function(){";
+  html += "function diag(kind,msg,detail){try{if(window.fcDiag)window.fcDiag(kind,msg,detail);}catch(e){}}";
+  html += "function setArea(area,text){try{area.value=text;}catch(e){try{area.textContent=text;}catch(_){}}}";
+  html += "function loadOne(area){if(!area||area.getAttribute('data-dev-loading')==='1')return;var key=area.getAttribute('data-dev-text')||'';if(!key)return;area.setAttribute('data-dev-loading','1');setArea(area,'Loading '+key+' ...');var xhr=new XMLHttpRequest();var done=false;var timer=setTimeout(function(){if(done)return;done=true;try{xhr.abort();}catch(e){}area.removeAttribute('data-dev-loading');setArea(area,'Failed to load '+key+' stats.\\nRequest timed out.\\nTap Open raw to test the endpoint directly.');diag('developer-text-timeout','Developer stats load timed out',key);},45000);xhr.onreadystatechange=function(){if(xhr.readyState!==4||done)return;done=true;clearTimeout(timer);area.removeAttribute('data-dev-loading');if(xhr.status>=200&&xhr.status<300){setArea(area,xhr.responseText||'No data returned.');}else{setArea(area,'Failed to load '+key+' stats.\\nHTTP '+xhr.status+'\\n'+(xhr.responseText||'Tap Open raw to test the endpoint directly.'));diag('developer-text-http-failed','Developer stats HTTP failed',key+': HTTP '+xhr.status);}};try{xhr.open('GET','/developer-text?name='+encodeURIComponent(key)+'&t='+(new Date()).getTime(),true);xhr.setRequestHeader('Cache-Control','no-store');xhr.send();}catch(err){done=true;clearTimeout(timer);area.removeAttribute('data-dev-loading');setArea(area,'Failed to load '+key+' stats.\\n'+(err&&err.message?err.message:String(err||''))+'\\nTap Open raw to test the endpoint directly.');diag('developer-text-load-failed','Developer stats load failed',key+': '+(err&&err.stack?err.stack:String(err||'')));}}";
+  html += "function loadAll(){var areas=document.querySelectorAll?document.querySelectorAll('textarea[data-dev-text]'):[];for(var i=0;i<areas.length;i++){(function(area,delay){setTimeout(function(){loadOne(area);},delay);})(areas[i],i*300);}}";
+  html += "if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',loadAll);else setTimeout(loadAll,0);setTimeout(loadAll,1500);";
+  html += "})();";
+  html += "</script>";
 #endif
 
   html += "<script>";
@@ -2535,6 +2526,49 @@ static void handlePortalReleaseInfo() {
   portalServer.send(200, "application/json; charset=utf-8", json);
 }
 
+#if ENABLE_DEVELOPER_STATS
+static void handlePortalDeveloperText() {
+  if (hasSetupPinConfigured(deviceConfig)) {
+    if (isPortalUnlockExpired()) {
+      portalUnlocked = false;
+      portalUnlockedAtMs = 0;
+    }
+    if (!portalUnlocked) {
+      portalServer.send(403, "text/plain; charset=utf-8", "Setup session expired. Enter your PIN again.");
+      return;
+    }
+    refreshPortalUnlockSession();
+  }
+
+  String name = portalServer.arg("name");
+  name.trim();
+  String text;
+
+  if (name == "boot") {
+    text = loadLastBootPathDiagnosticsText();
+  } else if (name == "app") {
+    text = loadLastAppBootDiagnosticsText();
+  } else if (name == "portal") {
+    text = loadLastPortalDiagnosticsText();
+  } else if (name == "battery") {
+    loadBatteryLog(batteryLog);
+    text = buildBatteryLogText(batteryLog);
+  } else if (name == "storage") {
+    text = buildDeveloperStatsText();
+  } else if (name == "history") {
+    loadWealthHistory(wealthHistory);
+    text = buildHistoryStatsText(wealthHistory, sanitizeCurrencyCode(deviceConfig.currencyCode));
+  } else {
+    portalServer.send(404, "text/plain; charset=utf-8", "Unknown developer stats request.");
+    return;
+  }
+
+  portalServer.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+  portalServer.sendHeader("Pragma", "no-cache");
+  portalServer.send(200, "text/plain; charset=utf-8", text);
+}
+#endif
+
 static void handlePortalRedirect() {
   portalServer.sendHeader("Location", String("http://") + CONFIG_AP_IP.toString() + "/", true);
   portalServer.send(302, "text/plain", "");
@@ -2579,6 +2613,9 @@ static void setupPortalRoutes() {
   portalServer.on("/validate", HTTP_POST, handlePortalValidate);
   portalServer.on("/release-info", HTTP_POST, handlePortalReleaseInfo);
   portalServer.on("/wifi-list", HTTP_GET, handlePortalWifiList);
+#if ENABLE_DEVELOPER_STATS
+  portalServer.on("/developer-text", HTTP_GET, handlePortalDeveloperText);
+#endif
   portalServer.on("/generate_204", HTTP_GET, handlePortalGenerate204);
   portalServer.on("/redirect", HTTP_GET, handlePortalRedirect);
   portalServer.on("/hotspot-detect.html", HTTP_GET, handlePortalHotspotDetect);

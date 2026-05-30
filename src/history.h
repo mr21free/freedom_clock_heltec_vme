@@ -4,19 +4,25 @@ static void clearBatteryLogInMemory(BatteryLog& log) {
   memset(&log, 0, sizeof(log));
 }
 
-static bool loadBatteryLog(BatteryLog& log) {
-  clearBatteryLogInMemory(log);
+static void setBatteryLogStorageStatus(const char* text) {
+  if (!text) text = "";
+  strlcpy(batteryLogStorageStatus, text, sizeof(batteryLogStorageStatus));
+}
 
-  if (!preferences.begin(BATTERY_LOG_NAMESPACE, true)) {
-    return false;
+static bool ensureBatteryLogFileSystemMounted() {
+  static bool attempted = false;
+  static bool mounted = false;
+  if (attempted) return mounted;
+
+  attempted = true;
+  mounted = SPIFFS.begin(false);
+  if (!mounted) {
+    mounted = SPIFFS.begin(true);
   }
+  return mounted;
+}
 
-  const size_t storedSize = preferences.getBytesLength("log");
-  if (storedSize == sizeof(BatteryLog)) {
-    preferences.getBytes("log", &log, sizeof(BatteryLog));
-  }
-  preferences.end();
-
+static bool validateBatteryLog(BatteryLog& log) {
   if (log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
     clearBatteryLogInMemory(log);
     return false;
@@ -24,21 +30,133 @@ static bool loadBatteryLog(BatteryLog& log) {
   return true;
 }
 
-static bool saveBatteryLog(const BatteryLog& log) {
-  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
+static bool loadBatteryLogFromLegacyNvs(BatteryLog& log) {
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, true)) {
+    setBatteryLogStorageStatus("load failed: legacy NVS open failed");
     return false;
   }
-  const size_t written = preferences.putBytes("log", &log, sizeof(BatteryLog));
+
+  const size_t storedSize = preferences.getBytesLength("log");
+  if (storedSize == sizeof(BatteryLog)) {
+    preferences.getBytes("log", &log, sizeof(BatteryLog));
+    preferences.end();
+    if (!validateBatteryLog(log)) {
+      setBatteryLogStorageStatus("load failed: legacy NVS data invalid");
+      return false;
+    }
+    snprintf(
+      batteryLogStorageStatus,
+      sizeof(batteryLogStorageStatus),
+      "loaded from legacy NVS: %u samples",
+      (unsigned int)log.count
+    );
+    return true;
+  }
+
   preferences.end();
-  return written == sizeof(BatteryLog);
+  snprintf(
+    batteryLogStorageStatus,
+    sizeof(batteryLogStorageStatus),
+    "empty: no SPIFFS file, legacy NVS size=%u",
+    (unsigned int)storedSize
+  );
+  return false;
+}
+
+static bool loadBatteryLog(BatteryLog& log) {
+  clearBatteryLogInMemory(log);
+
+  if (!ensureBatteryLogFileSystemMounted()) {
+    return loadBatteryLogFromLegacyNvs(log);
+  }
+
+  File file = SPIFFS.open(BATTERY_LOG_FILE_PATH, FILE_READ);
+  if (!file) {
+    return loadBatteryLogFromLegacyNvs(log);
+  }
+
+  const size_t storedSize = file.size();
+  if (storedSize != sizeof(BatteryLog)) {
+    file.close();
+    clearBatteryLogInMemory(log);
+    snprintf(
+      batteryLogStorageStatus,
+      sizeof(batteryLogStorageStatus),
+      "load failed: SPIFFS size=%u expected=%u",
+      (unsigned int)storedSize,
+      (unsigned int)sizeof(BatteryLog)
+    );
+    return false;
+  }
+
+  const size_t bytesRead = file.readBytes(reinterpret_cast<char*>(&log), sizeof(BatteryLog));
+  file.close();
+  if (bytesRead != sizeof(BatteryLog)) {
+    clearBatteryLogInMemory(log);
+    snprintf(
+      batteryLogStorageStatus,
+      sizeof(batteryLogStorageStatus),
+      "load failed: SPIFFS read=%u expected=%u",
+      (unsigned int)bytesRead,
+      (unsigned int)sizeof(BatteryLog)
+    );
+    return false;
+  }
+
+  if (!validateBatteryLog(log)) {
+    setBatteryLogStorageStatus("load failed: SPIFFS data invalid");
+    return false;
+  }
+
+  snprintf(
+    batteryLogStorageStatus,
+    sizeof(batteryLogStorageStatus),
+    "loaded from SPIFFS: %u samples",
+    (unsigned int)log.count
+  );
+  return true;
+}
+
+static bool saveBatteryLog(const BatteryLog& log) {
+  if (!ensureBatteryLogFileSystemMounted()) {
+    setBatteryLogStorageStatus("save failed: SPIFFS mount failed");
+    return false;
+  }
+
+  SPIFFS.remove(BATTERY_LOG_FILE_PATH);
+  File file = SPIFFS.open(BATTERY_LOG_FILE_PATH, FILE_WRITE);
+  if (!file) {
+    setBatteryLogStorageStatus("save failed: SPIFFS open failed");
+    return false;
+  }
+
+  const size_t written = file.write(reinterpret_cast<const uint8_t*>(&log), sizeof(BatteryLog));
+  file.close();
+  const bool ok = written == sizeof(BatteryLog);
+  snprintf(
+    batteryLogStorageStatus,
+    sizeof(batteryLogStorageStatus),
+    "%s: SPIFFS wrote=%u expected=%u samples=%u",
+    ok ? "saved" : "save failed",
+    (unsigned int)written,
+    (unsigned int)sizeof(BatteryLog),
+    (unsigned int)log.count
+  );
+  return ok;
 }
 
 static bool clearBatteryLog() {
-  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
-    return false;
+  bool ok = true;
+  if (ensureBatteryLogFileSystemMounted() && SPIFFS.exists(BATTERY_LOG_FILE_PATH)) {
+    ok = SPIFFS.remove(BATTERY_LOG_FILE_PATH);
   }
-  const bool ok = preferences.clear();
+
+  if (!preferences.begin(BATTERY_LOG_NAMESPACE, false)) {
+    return ok;
+  }
+  ok = preferences.clear() && ok;
   preferences.end();
+  setBatteryLogStorageStatus(ok ? "cleared" : "clear failed");
   return ok;
 }
 
@@ -65,7 +183,10 @@ static String buildBatteryLogText(const BatteryLog& log) {
   out.reserve(220 + ((size_t)log.count * 48));
   out += "Battery calibration log\n";
   out += "Format: sample, unix_time, voltage, percent\n";
-  out += "Newest sample is last.\n\n";
+  out += "Newest sample is last.\n";
+  out += "Storage: ";
+  out += batteryLogStorageStatus;
+  out += "\n\n";
 
   if (log.count == 0 || log.count > BATTERY_LOG_SAMPLES) {
     out += "No battery samples recorded yet.";

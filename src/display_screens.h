@@ -596,13 +596,12 @@ static void drawQuoteScreen(
   static constexpr int TOP_Y_S1   = 21;
   static constexpr int TOP_Y_S2   = 14;
 
-#if DEVICE_PROFILE_E290
-  static constexpr int CHARS_S1 = 46;
-  static constexpr int CHARS_S2 = 24;
-#else
-  static constexpr int CHARS_S1 = 39;
-  static constexpr int CHARS_S2 = 19;
-#endif
+  // Built-in GFX font cells are 6px wide at size 1 and 12px at size 2.
+  // Derive wrap width from the actual panel width so E290 cannot overrun by
+  // one large glyph, and E213 keeps the same safe margin.
+  const int quoteTextMaxW = DEVICE_DISPLAY_WIDTH - LEFT_X - MARGIN_X;
+  const int CHARS_S1 = (quoteTextMaxW / 6 > 0) ? quoteTextMaxW / 6 : 1;
+  const int CHARS_S2 = (quoteTextMaxW / 12 > 0) ? quoteTextMaxW / 12 : 1;
 
   // Bottom strip: separator + one freedom-info line
   const int FREEDOM_Y = DEVICE_DISPLAY_HEIGHT - 8 - 9;
