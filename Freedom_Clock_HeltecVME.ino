@@ -82,6 +82,9 @@ RTC_DATA_ATTR char lastPriceValue[VALUE_BUFFER_SIZE] = "--";
 RTC_DATA_ATTR char lastBalanceBtc[VALUE_BUFFER_SIZE] = "--";
 RTC_DATA_ATTR time_t lastKnownUnixTime = 0;
 RTC_DATA_ATTR time_t lastBtcCacheUnixTime = 0;
+RTC_DATA_ATTR bool batteryGaugeStateValid = false;
+RTC_DATA_ATTR int batteryGaugePercent = 0;
+RTC_DATA_ATTR float batteryGaugeReferenceVoltage = 0.0f;
 
 static constexpr uint16_t WEALTH_HISTORY_DAYS = 366;
 static constexpr uint16_t BATTERY_LOG_SAMPLES = 1440;
@@ -241,6 +244,7 @@ struct GitHubReleaseInfo {
 static DeviceConfig deviceConfig = {};
 static WealthHistory wealthHistory = {};
 static BatteryLog batteryLog = {};
+static char wealthHistoryStorageStatus[160] = "not loaded";
 static char batteryLogStorageStatus[160] = "not loaded";
 static AppScreenId portalExitScreen = APP_SCREEN_MAIN;
 static char lastConfigLoadStatus[CONFIG_LOAD_STATUS_SIZE] = "not loaded";
@@ -428,15 +432,14 @@ void setup() {
   portalSessionMessage[0] = '\0';
   portalSessionMessageIsError = false;
 
-  float vbat = readBatteryVoltage();
-  int pct = batteryPercentFromVoltage(vbat);
-#if ENABLE_DEVELOPER_STATS
   loadBatteryLog(batteryLog);
+  seedBatteryGaugeStateFromLog(batteryLog);
+  float vbat = readBatteryVoltage();
+  int pct = stabilizedBatteryPercentFromVoltage(vbat);
+#if ENABLE_DEVELOPER_STATS
   if (appendBatteryLogSample(batteryLog, lastKnownUnixTime, vbat, pct)) {
     saveBatteryLog(batteryLog);
   }
-#else
-  loadBatteryLog(batteryLog);
 #endif
 
   if (bootAction == SETUP_BOOT_ACTION_FACTORY_RESET) {

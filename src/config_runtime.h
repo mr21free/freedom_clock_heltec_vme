@@ -108,9 +108,19 @@ static void buildMqttClientId(char* dst, size_t dstSize) {
 }
 
 static int batteryPercentFromVoltage(float v) {
-  static constexpr int NUM_POINTS = 8;
-  static constexpr float voltTable[NUM_POINTS] = { 3.20f, 3.30f, 3.60f, 3.75f, 3.85f, 3.95f, 4.02f, 4.06f };
-  static constexpr int socTable[NUM_POINTS] = { 0, 2, 25, 50, 70, 90, 97, 100 };
+  // Calibrated from a logged discharge run; SOC is based on elapsed runtime.
+  // The last clean sample was 3.26V, so the small missing tail is treated as empty.
+  static constexpr int NUM_POINTS = 24;
+  static constexpr float voltTable[NUM_POINTS] = {
+    3.20f, 3.26f, 3.32f, 3.36f, 3.42f, 3.52f, 3.62f, 3.67f,
+    3.71f, 3.74f, 3.76f, 3.78f, 3.82f, 3.87f, 3.89f, 3.90f,
+    3.91f, 3.92f, 3.94f, 3.95f, 3.97f, 4.00f, 4.02f, 4.08f
+  };
+  static constexpr int socTable[NUM_POINTS] = {
+    0, 0, 1, 2, 5, 10, 15, 20,
+    25, 30, 38, 48, 55, 60, 63, 69,
+    78, 83, 88, 91, 94, 98, 99, 100
+  };
 
   if (v <= voltTable[0]) return socTable[0];
   if (v >= voltTable[NUM_POINTS - 1]) return socTable[NUM_POINTS - 1];
@@ -129,6 +139,46 @@ static int batteryPercentFromVoltage(float v) {
     }
   }
   return 0;
+}
+
+static int stabilizedBatteryPercentFromVoltage(float v) {
+  const int rawPercent = clampInt(batteryPercentFromVoltage(v), 0, 100);
+  const bool stateLooksValid = batteryGaugeStateValid
+    && batteryGaugePercent >= 0
+    && batteryGaugePercent <= 100
+    && batteryGaugeReferenceVoltage > 0.0f
+    && batteryGaugeReferenceVoltage < 5.0f;
+
+  if (!stateLooksValid || !(v > 0.0f)) {
+    batteryGaugeStateValid = true;
+    batteryGaugePercent = rawPercent;
+    batteryGaugeReferenceVoltage = v;
+    return rawPercent;
+  }
+
+  static constexpr float RECHARGE_DETECT_VOLTAGE_RISE = 0.06f;
+  static constexpr float FULL_BATTERY_VOLTAGE = 4.05f;
+
+  int stablePercent = rawPercent;
+  if (rawPercent > batteryGaugePercent) {
+    const bool looksLikeRecharge =
+      v >= (batteryGaugeReferenceVoltage + RECHARGE_DETECT_VOLTAGE_RISE) ||
+      (v >= FULL_BATTERY_VOLTAGE && rawPercent >= 99);
+    if (!looksLikeRecharge) {
+      stablePercent = batteryGaugePercent;
+    }
+  }
+
+  if (stablePercent < batteryGaugePercent) {
+    batteryGaugeReferenceVoltage = v;
+  } else if (stablePercent == batteryGaugePercent && v < batteryGaugeReferenceVoltage) {
+    batteryGaugeReferenceVoltage = v;
+  } else if (stablePercent > batteryGaugePercent) {
+    batteryGaugeReferenceVoltage = v;
+  }
+  batteryGaugePercent = stablePercent;
+  batteryGaugeStateValid = true;
+  return stablePercent;
 }
 
 static float readBatteryVoltage() {
@@ -471,6 +521,12 @@ static bool saveDeviceConfig(const DeviceConfig& cfg) {
     return false;
   }
 
+  const uint32_t historyWriteCount = preferences.getUInt("hist_writes", 0);
+  const uint32_t historyWriteDay = preferences.getUInt("hist_write_day", 0);
+  const uint32_t historyClearCount = preferences.getUInt("hist_clears", 0);
+  const uint32_t historyClearDay = preferences.getUInt("hist_clear_day", 0);
+  const String historyClearReason = preferences.getString("hist_clear", "");
+
   preferences.clear();
   preferences.putUInt("cfg_ver", CONFIG_VERSION);
   preferences.putBool("cfg_ok", true);
@@ -512,6 +568,15 @@ static bool saveDeviceConfig(const DeviceConfig& cfg) {
   preferences.putBool("batt_pct_show", cfg.showBatteryPercent);
   preferences.putBool("show_wealth", cfg.showWealthChangeScreen);
   preferences.putBool("show_settings", cfg.showSettingsScreen);
+  if (historyWriteCount > 0) {
+    preferences.putUInt("hist_writes", historyWriteCount);
+    preferences.putUInt("hist_write_day", historyWriteDay);
+  }
+  if (historyClearCount > 0) {
+    preferences.putUInt("hist_clears", historyClearCount);
+    preferences.putUInt("hist_clear_day", historyClearDay);
+    preferences.putString("hist_clear", historyClearReason);
+  }
   preferences.end();
   return true;
 }

@@ -9,7 +9,12 @@ static void setBatteryLogStorageStatus(const char* text) {
   strlcpy(batteryLogStorageStatus, text, sizeof(batteryLogStorageStatus));
 }
 
-static bool ensureBatteryLogFileSystemMounted() {
+static void setWealthHistoryStorageStatus(const char* text) {
+  if (!text) text = "";
+  strlcpy(wealthHistoryStorageStatus, text, sizeof(wealthHistoryStorageStatus));
+}
+
+static bool ensureLocalFileSystemMounted() {
   static bool attempted = false;
   static bool mounted = false;
   if (attempted) return mounted;
@@ -66,7 +71,7 @@ static bool loadBatteryLogFromLegacyNvs(BatteryLog& log) {
 static bool loadBatteryLog(BatteryLog& log) {
   clearBatteryLogInMemory(log);
 
-  if (!ensureBatteryLogFileSystemMounted()) {
+  if (!ensureLocalFileSystemMounted()) {
     return loadBatteryLogFromLegacyNvs(log);
   }
 
@@ -118,7 +123,7 @@ static bool loadBatteryLog(BatteryLog& log) {
 }
 
 static bool saveBatteryLog(const BatteryLog& log) {
-  if (!ensureBatteryLogFileSystemMounted()) {
+  if (!ensureLocalFileSystemMounted()) {
     setBatteryLogStorageStatus("save failed: SPIFFS mount failed");
     return false;
   }
@@ -147,7 +152,7 @@ static bool saveBatteryLog(const BatteryLog& log) {
 
 static bool clearBatteryLog() {
   bool ok = true;
-  if (ensureBatteryLogFileSystemMounted() && SPIFFS.exists(BATTERY_LOG_FILE_PATH)) {
+  if (ensureLocalFileSystemMounted() && SPIFFS.exists(BATTERY_LOG_FILE_PATH)) {
     ok = SPIFFS.remove(BATTERY_LOG_FILE_PATH);
   }
 
@@ -176,6 +181,38 @@ static bool appendBatteryLogSample(BatteryLog& log, time_t now, float voltage, i
   log.nextIndex = (uint16_t)((index + 1) % BATTERY_LOG_SAMPLES);
   if (log.count < BATTERY_LOG_SAMPLES) log.count++;
   return true;
+}
+
+static bool seedBatteryGaugeStateFromLog(const BatteryLog& log) {
+  if (batteryGaugeStateValid || log.count == 0 || log.count > BATTERY_LOG_SAMPLES || log.nextIndex >= BATTERY_LOG_SAMPLES) {
+    return false;
+  }
+
+  auto seedFromIndex = [&](uint16_t index) {
+    const uint16_t millivolts = log.millivolts[index];
+    if (millivolts == 0) return false;
+    batteryGaugeStateValid = true;
+    batteryGaugePercent = clampInt((int)log.percent[index], 0, 100);
+    batteryGaugeReferenceVoltage = (float)millivolts / 1000.0f;
+    return true;
+  };
+
+  uint16_t index = (log.nextIndex == 0) ? (BATTERY_LOG_SAMPLES - 1) : (uint16_t)(log.nextIndex - 1);
+  for (uint16_t i = 0; i < log.count; i++) {
+    if (log.unixTime[index] >= 1700000000 && seedFromIndex(index)) {
+      return true;
+    }
+    index = (index == 0) ? (BATTERY_LOG_SAMPLES - 1) : (uint16_t)(index - 1);
+  }
+
+  index = (log.nextIndex == 0) ? (BATTERY_LOG_SAMPLES - 1) : (uint16_t)(log.nextIndex - 1);
+  for (uint16_t i = 0; i < log.count; i++) {
+    if (seedFromIndex(index)) {
+      return true;
+    }
+    index = (index == 0) ? (BATTERY_LOG_SAMPLES - 1) : (uint16_t)(index - 1);
+  }
+  return false;
 }
 
 static String buildBatteryLogText(const BatteryLog& log) {
@@ -319,16 +356,21 @@ static void clearWealthHistoryInMemory(WealthHistory& history) {
   }
 }
 
-static bool loadWealthHistory(WealthHistory& history) {
-  clearWealthHistoryInMemory(history);
-
+static bool loadWealthHistoryFromLegacyNvs(WealthHistory& history) {
   if (!preferences.begin(HISTORY_NAMESPACE, true)) {
+    setWealthHistoryStorageStatus("load failed: legacy NVS open failed");
     return false;
   }
 
   const uint32_t storedVersion = preferences.getUInt("ver", 0);
   if (storedVersion != HISTORY_VERSION) {
     preferences.end();
+    snprintf(
+      wealthHistoryStorageStatus,
+      sizeof(wealthHistoryStorageStatus),
+      "empty: no SPIFFS file, legacy NVS version=%lu",
+      (unsigned long)storedVersion
+    );
     return false;
   }
 
@@ -344,16 +386,82 @@ static bool loadWealthHistory(WealthHistory& history) {
     balanceBytesRead != sizeof(history.dailyBalanceSats)
   ) {
     clearWealthHistoryInMemory(history);
+    snprintf(
+      wealthHistoryStorageStatus,
+      sizeof(wealthHistoryStorageStatus),
+      "load failed: legacy NVS sizes wealth=%u price=%u bal=%u",
+      (unsigned int)wealthBytesRead,
+      (unsigned int)priceBytesRead,
+      (unsigned int)balanceBytesRead
+    );
     return false;
   }
 
+  snprintf(
+    wealthHistoryStorageStatus,
+    sizeof(wealthHistoryStorageStatus),
+    "loaded from legacy NVS: latest_day=%lu",
+    (unsigned long)history.latestDay
+  );
   return history.latestDay > 0;
 }
 
 static void recordHistoryWriteMetadata(uint32_t latestDay);
 static void recordHistoryClearMetadata(const char* reason);
 
-static bool saveWealthHistory(const WealthHistory& history) {
+static bool loadWealthHistory(WealthHistory& history) {
+  clearWealthHistoryInMemory(history);
+
+  if (!ensureLocalFileSystemMounted()) {
+    return loadWealthHistoryFromLegacyNvs(history);
+  }
+
+  File file = SPIFFS.open(WEALTH_HISTORY_FILE_PATH, FILE_READ);
+  if (!file) {
+    return loadWealthHistoryFromLegacyNvs(history);
+  }
+
+  const size_t storedSize = file.size();
+  if (storedSize != sizeof(WealthHistory)) {
+    file.close();
+    clearWealthHistoryInMemory(history);
+    if (loadWealthHistoryFromLegacyNvs(history)) {
+      return true;
+    }
+    snprintf(
+      wealthHistoryStorageStatus,
+      sizeof(wealthHistoryStorageStatus),
+      "load failed: SPIFFS size=%u expected=%u",
+      (unsigned int)storedSize,
+      (unsigned int)sizeof(WealthHistory)
+    );
+    return false;
+  }
+
+  const size_t bytesRead = file.readBytes(reinterpret_cast<char*>(&history), sizeof(WealthHistory));
+  file.close();
+  if (bytesRead != sizeof(WealthHistory)) {
+    clearWealthHistoryInMemory(history);
+    snprintf(
+      wealthHistoryStorageStatus,
+      sizeof(wealthHistoryStorageStatus),
+      "load failed: SPIFFS read=%u expected=%u",
+      (unsigned int)bytesRead,
+      (unsigned int)sizeof(WealthHistory)
+    );
+    return false;
+  }
+
+  snprintf(
+    wealthHistoryStorageStatus,
+    sizeof(wealthHistoryStorageStatus),
+    "loaded from SPIFFS: latest_day=%lu",
+    (unsigned long)history.latestDay
+  );
+  return history.latestDay > 0;
+}
+
+static bool saveWealthHistoryToLegacyNvs(const WealthHistory& history) {
   if (!preferences.begin(HISTORY_NAMESPACE, false)) {
     return false;
   }
@@ -364,11 +472,49 @@ static bool saveWealthHistory(const WealthHistory& history) {
   size_t priceBytesWritten = preferences.putBytes("price", history.dailyPriceValue, sizeof(history.dailyPriceValue));
   size_t balanceBytesWritten = preferences.putBytes("bal", history.dailyBalanceSats, sizeof(history.dailyBalanceSats));
   preferences.end();
-  const bool saved = (
+  return (
     wealthBytesWritten == sizeof(history.dailyWealthValue) &&
     priceBytesWritten == sizeof(history.dailyPriceValue) &&
     balanceBytesWritten == sizeof(history.dailyBalanceSats)
   );
+}
+
+static bool saveWealthHistory(const WealthHistory& history) {
+  bool saved = false;
+  if (ensureLocalFileSystemMounted()) {
+    SPIFFS.remove(WEALTH_HISTORY_FILE_PATH);
+    File file = SPIFFS.open(WEALTH_HISTORY_FILE_PATH, FILE_WRITE);
+    if (file) {
+      const size_t written = file.write(reinterpret_cast<const uint8_t*>(&history), sizeof(WealthHistory));
+      file.close();
+      saved = written == sizeof(WealthHistory);
+      snprintf(
+        wealthHistoryStorageStatus,
+        sizeof(wealthHistoryStorageStatus),
+        "%s: SPIFFS wrote=%u expected=%u latest_day=%lu",
+        saved ? "saved" : "save failed",
+        (unsigned int)written,
+        (unsigned int)sizeof(WealthHistory),
+        (unsigned long)history.latestDay
+      );
+    } else {
+      setWealthHistoryStorageStatus("save failed: SPIFFS open failed");
+    }
+  } else {
+    setWealthHistoryStorageStatus("save failed: SPIFFS mount failed");
+  }
+
+  if (!saved) {
+    saved = saveWealthHistoryToLegacyNvs(history);
+    snprintf(
+      wealthHistoryStorageStatus,
+      sizeof(wealthHistoryStorageStatus),
+      "%s: legacy NVS latest_day=%lu",
+      saved ? "saved fallback" : "save failed fallback",
+      (unsigned long)history.latestDay
+    );
+  }
+
   if (saved) {
     recordHistoryWriteMetadata(history.latestDay);
   }
@@ -397,10 +543,15 @@ static void recordHistoryClearMetadata(const char* reason) {
 }
 
 static bool clearWealthHistory() {
-  if (!preferences.begin(HISTORY_NAMESPACE, false)) {
-    return false;
+  bool cleared = true;
+  if (ensureLocalFileSystemMounted() && SPIFFS.exists(WEALTH_HISTORY_FILE_PATH)) {
+    cleared = SPIFFS.remove(WEALTH_HISTORY_FILE_PATH);
   }
-  bool cleared = preferences.clear();
+
+  if (!preferences.begin(HISTORY_NAMESPACE, false)) {
+    return cleared;
+  }
+  cleared = preferences.clear() && cleared;
   preferences.end();
   return cleared;
 }
@@ -411,6 +562,66 @@ static bool clearWealthHistoryWithReason(const char* reason) {
     recordHistoryClearMetadata(reason);
   }
   return cleared;
+}
+
+static uint16_t countWealthHistoryRows(const WealthHistory& history) {
+  uint16_t rows = 0;
+  for (uint16_t i = 0; i < WEALTH_HISTORY_DAYS; i++) {
+    if (
+      history.dailyWealthValue[i] != WEALTH_HISTORY_EMPTY ||
+      history.dailyPriceValue[i] != PRICE_HISTORY_EMPTY ||
+      history.dailyBalanceSats[i] != BALANCE_HISTORY_EMPTY
+    ) {
+      rows++;
+    }
+  }
+  return rows;
+}
+
+static bool backfillSparseWealthHistoryFromMetadata(WealthHistory& history) {
+  if (history.latestDay == 0 || countWealthHistoryRows(history) != 1) {
+    return false;
+  }
+
+  uint32_t lastWriteDay = 0;
+  uint32_t lastClearDay = 0;
+  if (preferences.begin(CONFIG_NAMESPACE, true)) {
+    lastWriteDay = preferences.getUInt("hist_write_day", 0);
+    lastClearDay = preferences.getUInt("hist_clear_day", 0);
+    preferences.end();
+  }
+  if (lastWriteDay == 0 || lastWriteDay >= history.latestDay) {
+    return false;
+  }
+  if (lastClearDay >= lastWriteDay && lastClearDay <= history.latestDay) {
+    return false;
+  }
+
+  static constexpr uint32_t METADATA_REPAIR_MAX_DAYS = 7;
+  const uint32_t missingDays = history.latestDay - lastWriteDay;
+  if (missingDays == 0 || missingDays > METADATA_REPAIR_MAX_DAYS) {
+    return false;
+  }
+
+  const uint16_t latestIndex = WEALTH_HISTORY_DAYS - 1;
+  const int32_t latestWealth = history.dailyWealthValue[latestIndex];
+  const int32_t latestPrice = history.dailyPriceValue[latestIndex];
+  const int64_t latestBalance = history.dailyBalanceSats[latestIndex];
+  if (
+    latestWealth == WEALTH_HISTORY_EMPTY &&
+    latestPrice == PRICE_HISTORY_EMPTY &&
+    latestBalance == BALANCE_HISTORY_EMPTY
+  ) {
+    return false;
+  }
+
+  for (uint32_t daysAgo = 1; daysAgo <= missingDays && daysAgo < WEALTH_HISTORY_DAYS; daysAgo++) {
+    const uint16_t index = (uint16_t)(latestIndex - daysAgo);
+    history.dailyWealthValue[index] = latestWealth;
+    history.dailyPriceValue[index] = latestPrice;
+    history.dailyBalanceSats[index] = latestBalance;
+  }
+  return true;
 }
 
 static bool updateWealthHistory(
@@ -434,6 +645,10 @@ static bool updateWealthHistory(
     ? (int64_t)(balanceBtc * 100000000.0 + 0.5)
     : BALANCE_HISTORY_EMPTY;
 
+  const bool repairedSparseHistory = (history.latestDay == currentDay)
+    ? backfillSparseWealthHistoryFromMetadata(history)
+    : false;
+
   if (history.latestDay == 0) {
     clearWealthHistoryInMemory(history);
     history.latestDay = currentDay;
@@ -447,7 +662,7 @@ static bool updateWealthHistory(
     int32_t& latest = history.dailyWealthValue[WEALTH_HISTORY_DAYS - 1];
     int32_t& latestPrice = history.dailyPriceValue[WEALTH_HISTORY_DAYS - 1];
     int64_t& latestBalance = history.dailyBalanceSats[WEALTH_HISTORY_DAYS - 1];
-    if (latest == wealthRounded && latestPrice == priceRounded && latestBalance == balanceSats) return false;
+    if (latest == wealthRounded && latestPrice == priceRounded && latestBalance == balanceSats) return repairedSparseHistory;
     latest = wealthRounded;
     latestPrice = priceRounded;
     latestBalance = balanceSats;
@@ -624,10 +839,14 @@ static String buildHistoryStatsText(const WealthHistory& history, uint8_t curren
   out += "Currency: ";
   out += currencyCodeLabel(currencyCode);
   out += "\n";
-  out += "Storage: NVS namespace ";
+  out += "Storage: SPIFFS file ";
+  out += WEALTH_HISTORY_FILE_PATH;
+  out += " with legacy NVS fallback ";
   out += HISTORY_NAMESPACE;
   out += ", version ";
   out += String((unsigned long)HISTORY_VERSION);
+  out += "\nStorage status: ";
+  out += wealthHistoryStorageStatus;
   out += "\nCapacity: ";
   out += String((unsigned int)WEALTH_HISTORY_DAYS);
   out += " days\n";
@@ -642,16 +861,7 @@ static String buildHistoryStatsText(const WealthHistory& history, uint8_t curren
     return out;
   }
 
-  uint16_t recordedRows = 0;
-  for (uint16_t i = 0; i < WEALTH_HISTORY_DAYS; i++) {
-    if (
-      history.dailyWealthValue[i] != WEALTH_HISTORY_EMPTY ||
-      history.dailyPriceValue[i] != PRICE_HISTORY_EMPTY ||
-      history.dailyBalanceSats[i] != BALANCE_HISTORY_EMPTY
-    ) {
-      recordedRows++;
-    }
-  }
+  const uint16_t recordedRows = countWealthHistoryRows(history);
 
   out += "Status: history loaded from device storage\n";
   out += "latest_day=";
