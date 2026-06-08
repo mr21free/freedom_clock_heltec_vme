@@ -4,6 +4,8 @@ Freedom Clock is a low-power e-ink device that turns savings into time. It is bu
 
 ![Freedom Clock main screen on E290](photos/freedom_clock_e290_main.jpeg)
 
+Try the Freedom Clock calculator at [freedomclock.io](https://freedomclock.io/).
+
 The current firmware supports both Heltec Vision Master E-series boards:
 
 - Heltec Vision Master E290 (recommended)
