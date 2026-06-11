@@ -26,7 +26,7 @@ Secure Boot V2 verifies firmware signatures during boot. You keep the private si
 
 ## Important Reality
 
-A normal Arduino IDE upload of `Freedom_Clock_HeltecVME.ino` does not enable flash encryption or Secure Boot V2. The same source supports both E213 and E290 when the correct Heltec board is selected.
+A normal Arduino IDE upload of `Freedom_Clock.ino` does not enable flash encryption or Secure Boot V2. The same source supports both E213 and E290 when the correct Heltec board is selected.
 
 Arduino uploads are still perfect for development, but hardware security needs a separate provisioning step because it burns one-way eFuses.
 

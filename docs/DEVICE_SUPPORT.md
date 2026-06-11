@@ -47,8 +47,8 @@ That keeps user settings and release notes unified while still allowing each scr
 The Arduino sketch is device-neutral:
 
 ```text
-Freedom_Clock_HeltecVME/
-  Freedom_Clock_HeltecVME.ino
+Freedom_Clock/
+  Freedom_Clock.ino
   src/
     config.h
     display_screens.h
