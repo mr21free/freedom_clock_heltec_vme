@@ -152,7 +152,7 @@ Online release checks and downloads use HTTPS certificate validation. If the dev
 GitHub releases live under:
 
 ```text
-https://github.com/mr21free/freedom_clock_heltec_vme/releases
+https://github.com/mr21free/freedom-clock/releases
 ```
 
 Release assets should be model-specific, for example:
