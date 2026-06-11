@@ -181,7 +181,7 @@ The private release checklist lives in gitignored `dev-local/RELEASING.md`.
    - PubSubClient by Nick O'Leary
    - ArduinoJson by Benoit Blanchon
    - Adafruit GFX Library by Adafruit
-3. Open [Freedom_Clock_HeltecVME.ino](Freedom_Clock_HeltecVME.ino).
+3. Open [Freedom_Clock.ino](Freedom_Clock.ino).
 4. Connect your board via USB to your computer. Select the right device in Tools > Port (usually /dev/cu.usbmodem1101)
 5. Select your board in Tools > Board
    - `Heltec Vision Master E213` for E213
